@@ -1,0 +1,51 @@
+{
+    "srf": {
+        "full_name": "Simos-Roy-Figueira (SRF)",
+        "short_name": "SRF",
+        "doi_link": "10.1016/S0377-2217(01)00370-8",
+        "methodology": "<ol><li>Rank criterion cards from most to least important; criteria with equal importance can be placed in the same column (ex aequo).</li><li>Insert blank cards between successive ex aequo groups to encode preference intensity: 0 blank card = 1 unit gap, 1 blank card = 2 units, etc.</li><li>Set the global ratio z between the most and least important groups and choose the output precision w.</li><li>The SRF model computes and returns normalized criteria weights consistent with the ranking and spacing information.</li></ol>"
+    },
+    "srf_ii": {
+        "full_name": "SRF-II",
+        "short_name": "SRF-II",
+        "doi_link": "10.1007/s12351-020-00611-4",
+        "methodology": "<ol><li>Build the ranking with criterion cards and optional blank cards exactly as in SRF.</li><li>Instead of providing z, specify e<sub>0</sub>, i.e., the number of blank cards between the least important group and a hypothetical zero-importance criterion.</li><li>Choose the output precision w.</li><li>The SRF-II model derives and normalizes criteria weights from the ranking, spacing, and e<sub>0</sub> information.</li></ol>"
+    },
+    "robust_srf": {
+        "full_name": "Robust SRF",
+        "short_name": "Robust SRF",
+        "doi_link": "10.1016/j.ejor.2015.04.037",
+        "methodology": "<ol><li>Rank criteria and place blank cards between successive ex aequo groups, as in SRF.</li><li>Provide the global ratio z between the most and least important groups and choose precision w.</li><li>The robust formulation explores the feasible weight region compatible with the provided preference information.</li><li>The tool returns representative normalized weights together with robustness-oriented outputs (e.g., ASI and distribution plots when available).</li></ol>"
+    },
+    "wap": {
+        "full_name": "Assessment Through Prioritization (WAP)",
+        "short_name": "WAP",
+        "doi_link": "10.1007/s12351-016-0280-7",
+        "methodology": "<ol><li>Rank criteria from most to least important (ex aequo groups allowed) without using blank cards.</li><li>For each pair of successive ranks, provide a local ratio interval [z<sub>r</sub><sup>min</sup>, z<sub>r</sub><sup>max</sup>] instead of one global z value.</li><li>Choose the output precision w.</li><li>The WAP model combines all local ratio constraints and returns normalized criteria weights consistent with the admissible space.</li></ol>"
+    },
+    "imprecise_srf": {
+        "full_name": "Imprecise SRF",
+        "short_name": "Imprecise SRF",
+        "doi_link": "10.1016/j.ejor.2015.12.053",
+        "methodology": "<ol><li>Rank criteria and insert blank cards to identify relevant gaps between successive ex aequo groups.</li><li>For each relevant gap, provide an interval [e<sub>r</sub><sup>min</sup>, e<sub>r</sub><sup>max</sup>] for the number of blank cards.</li><li>Provide an interval [z<sup>min</sup>, z<sup>max</sup>] for the global ratio between the most and least important groups, and choose precision w.</li><li>The imprecise SRF model solves the interval-constrained problem and returns normalized representative weights.</li></ol>"
+    },
+    "belief_degree_imprecise_srf": {
+        "full_name": "Belief-degree Imprecise SRF",
+        "short_name": "Belief-degree Imprecise SRF",
+        "doi_link": "10.1080/01605682.2022.2035271",
+        "methodology": "<ol><li>Rank criteria and define the relevant successive-rank gaps.</li><li>For each relevant gap, provide one or more pairs (e<sub>r</sub>, &beta;<sub>r</sub>); probabilities for the same gap must sum to 1.</li><li>Provide one or more pairs (z, &beta;) for the global ratio, with total probability equal to 1, and choose precision w.</li><li>The belief-degree imprecise SRF model aggregates these probabilistic inputs and returns normalized criteria weights with robustness diagnostics.</li></ol>"
+    },
+    "hfl_srf": {
+        "full_name": "Hesitant Fuzzy Linguistic (HFL)-SRF",
+        "short_name": "HFL-SRF",
+        "doi_link": "10.1016/j.asoc.2022.108979",
+        "methodology": "<ol><li>Rank criteria from most to least important (ex aequo groups allowed).</li><li>For each pair of successive ranks, choose a hesitant fuzzy linguistic interval [tau<sub>s</sub><sup>low</sup>, tau<sub>s</sub><sup>upp</sup>] using the rank-gap term scale 1..5 (with predefined fuzzy sets).</li><li>Choose a global hesitant interval [tau<sup>low</sup>, tau<sup>upp</sup>] for the contrast between the most and least important ranks using the z-term scale 1..10 (with predefined fuzzy sets), and choose precision w.</li><li>The HFL-SRF model solves the corresponding linear formulation and returns normalized criteria weights.</li></ol>"
+    },
+    "modular_srf": {
+        "full_name": "Modular Simos-Roy-Figueira (SRF)",
+        "short_name": "Modular SRF",
+        "doi_link": "10.1016/j.eswa.2026.131315",
+        "methodology": "<ol><li>Use the modular questionnaire to choose procedural, informational, normative, and analytical components.</li><li>Select the elicitation mechanism: standard deck, zero-criterion (SRF-II), or direct-ratio (WAP).</li><li>Define how uncertainty is represented (precise, interval, fuzzy/HFL, belief-degree probabilities) for rank gaps and ratio information.</li><li>Optionally activate anti-dictatorship and/or minimum-weight requirements.</li><li>Choose single-vector output or variability analysis, with fixed/dynamic unit weight and extreme/sampling analysis modes.</li><li>The app assembles the selected components into one SRF optimization model and computes the corresponding weights and diagnostics.</li></ol>"
+    }
+}
+

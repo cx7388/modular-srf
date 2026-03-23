@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modular SRF Weight Elicitation Tool</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260216') }}">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+          integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg=="
+          crossorigin="anonymous" referrerpolicy="no-referrer" />
+</head>
+
+<body>
+    <header>
+        <nav style="display: flex; justify-content: space-between; flex-wrap: wrap;">
+            <div style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
+                <div>
+                    <a href="https://www.psi.ch/en/ta" target="_blank">
+                        <img src="/static/images/psi_logo.svg" alt="PSI logo" height=40px>
+                    </a>
+                </div>
+                <div>
+                    <a href="/" class="navbar-brand">
+                        Modular SRF Weight Elicitation Tool
+                    </a>
+                </div>
+            </div>
+
+            <div style="display: flex; flex-direction: row; align-items: center;">
+                <div><a href="/" class="nav-link">Home</a></div>
+                <div><a href="/elicitation" class="nav-link nav-link-active" aria-current="page">Elicitation Tool</a></div>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <!-- Page title -->
+        <h1>Elicitation of criteria importance weights through the Modular SRF Weight Elicitation Tool</h1>
+
+        <label for="srf_method">Select the SRF configuration:</label>
+        <select name="srf_method" id="srf_method" class="dropdown-menu-srf-method"
+                onchange="updateSimosMethodInfo(this.value)">
+            <option value="srf">Simos-Roy-Figueira (SRF)</option>
+            <option value="srf_ii">SRF-II</option>
+            <option value="robust_srf">Robust SRF</option>
+            <option value="wap">Assessment Through Prioritization (WAP)</option>
+            <option value="imprecise_srf">Imprecise SRF</option>
+            <option value="belief_degree_imprecise_srf">Belief-degree Imprecise SRF</option>
+            <option value="hfl_srf">Hesitant Fuzzy Linguistic (HFL)-SRF</option>
+            <option value="modular_srf">Modular SRF</option>
+        </select>
+
+        <div style="display: flex; flex-direction: row; margin-bottom: 1rem; position: relative;">
+            <!-- Procedure of the Revised Simos' Method -->
+            <div class="method-details-instructions" id="simos-instructions">
+                <p>
+                    The <span id="method-full-name">Method-Name</span> configuration is implemented within the
+                    Modular SRF Weight Elicitation Tool. The key reference for the selected configuration is:
+                </p>
+                <p id="doi-link" style="padding-left: 4em; text-indent: -1.5em; font-size: 0.95rem;">
+                    Here, we will provide a full citation of the paper.
+                </p>
+
+                <button class="button-collapsible" id="tool-user-guidelines">User Guidelines for Applying the <span id="method-short-name">Simos-Roy-Figueira (SRF)</span> configuration</button>
+                <div class="detailed-procedure-collapsable">
+                    <p id="methodology"></p>
+                </div>
+            </div>
+
+            <!-- Two stacks of cards from where cards can be sourced -->
+            <div class="card-stacks">
+                <!-- Criteria cards -->
+                <div class="stack" id="criteria-cards">
+                    <div class="card criterion" id="criterion" draggable="true" ondragstart="drag(event)" contenteditable="false" spellcheck="false">Criterion</div>
+                    <div class="card criterion" id="criterion" draggable="true" ondragstart="drag(event)" contenteditable="false" spellcheck="false">Criterion</div>
+                    <div class="card criterion" id="criterion" draggable="true" ondragstart="drag(event)" contenteditable="false" spellcheck="false">Criterion</div>
+                    <div class="card criterion" id="criterion" draggable="true" ondragstart="drag(event)" contenteditable="false" spellcheck="false">Criterion</div>
+                </div>
+
+                <!-- Blank cards -->
+                <div class="stack" id="white-cards">
+                    <div class="card white" id="white_card" draggable="true" ondragstart="drag(event)" spellcheck="false">Blank card</div>
+                    <div class="card white" id="white_card" draggable="true" ondragstart="drag(event)" spellcheck="false">Blank card</div>
+                    <div class="card white" id="white_card" draggable="true" ondragstart="drag(event)" spellcheck="false">Blank card</div>
+                    <div class="card white" id="white_card" draggable="true" ondragstart="drag(event)" spellcheck="false">Blank card</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drop zone container with drop zone, clear button, insert new column button and ranks of cards-->
+        <div class="dz-container" style="position: relative;">
+            <div style="display: flex; width: 100%; justify-content: right">
+                <input type="file" id="importFile" accept=".json" style="display: none;">
+                <button class="import-button"><i class="fa-solid fa-download"></i> Import</button>
+
+                <button class="export-button"><i class="fa-solid fa-upload"></i> Export</button>
+
+                <button class="clear-button"><i class="fa-solid fa-broom"></i> Clear</button>
+            </div>
+            <div class="drop-zone-container">
+                <div class="drop-zone" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                <div id="ranks-container" class="ranks-container"></div>
+                <button class="insert-column-btn" title="Insert Blank Column"><i class="fa-solid fa-circle-plus"></i></button>
+            </div>
+            <div class="placeholder-text">Arrange the cards here...</div>
+        </div>
+
+        <!-- Axis of importance -->
+        <div class="arrow-line"></div>
+        <div class="importance-texts">
+            <span>More important</span><span>Less important</span>
+        </div>
+
+        <div id="additional-inputs">
+            <!-- Ratio of the most and least important criteria -->
+            <div id="z_value_query" style="display: flex; justify-content: space-between;">
+                <label for="z-value">
+                    By what factor does the most important ex aequo group outweigh the least important one (z value)?
+                </label>
+                <input type="number" id="z-value" name="z-value"
+                       class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
+                       step=0.5  min=1.5 max=1000 value=6.5
+                       placeholder="Enter a value">
+            </div>
+
+            <!-- SRF-II: the number of blank cards between the least important ex aequa and "zero criterion" -->
+            <div id="e0_value_query" style="display: none; justify-content: space-between;">
+                <label for="e0-value">
+                    How many blank cards separate the least important ex aequo from a "zero criterion" (e<sub>0</sub> value)?
+                </label>
+                <input type="number" id="e0-value" name="e0-value"
+                       class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
+                       step=1 min=0 max=999 value=4
+                       placeholder="Enter a value">
+            </div>
+
+            <!-- Preferred precision of criteria weights -->
+            <div id="w_value_query" style="display: flex; justify-content: space-between;">
+                <label for="w-value">
+                    What is the preferred number of decimal places for the final weights of the criteria (w value)?
+                </label>
+                <input type="number" id="w-value" name="w-value"
+                       class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
+                       step=1 min=0 max=2 value=1
+                       placeholder="Enter a value">
+            </div>
+        </div>
+
+        <!-- Calculate and download buttons -->
+        <div style="padding: 0.5rem 0;">
+            <button class="calculate-button">
+                <i class="fa-solid fa-calculator"></i> Calculate
+            </button>
+            <button class="download-button" id="downloadButton" onclick="exportToXLSX()">
+                <i class="fa-solid fa-file-export"></i> Export to XLSX
+            </button>
+        </div>
+
+        <!-- Results -->
+        <div id="loader-container" style="position: relative; width: 100%; height: 100px; display: none;"></div>
+        <div id="results-container" class="results-container" style="margin-top: 3rem;">
+            <div id="asi_value" class="asi_value" style="margin-bottom: 1rem;"></div>
+        </div>
+        <div id="boxplot" class="results-boxplot"></div>
+        <div id="pca_plot" class="results-pca-plot"></div>
+    </main>
+
+    <footer>
+        <div class="disclaimer">
+            <p>
+                Developed by River Huang for the <a href="https://www.psi.ch/en/lea" target="_blank">Laboratory for
+                Energy Systems Analysis (LEA)</a> at the Paul Scherrer Institute (PSI).</p>
+            <p>
+                Contact: <a href="mailto:river.huang@psi.ch">river.huang@psi.ch</a>
+            </p>
+            <p>
+                Disclaimer 1: We are not responsible for the accuracy or reliability of the calculation
+                results. Users should verify the outcomes independently.
+            </p>
+            <p>
+                Disclaimer 2: This tool implements a modular subset of SRF configurations designed for practical
+                decision support. It does not include every SRF variant or every possible module combination.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Import the JavaScript code for frontend & XLSX libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/3.0.1/plotly.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/spin.js/2.3.2/spin.min.js"></script>
+
+    <script src="{{ url_for('static', filename='js/main.js', v='20260214') }}"></script>
+    <script src="{{ url_for('static', filename='js/cardUtils.js', v='20260301') }}"></script>
+    <script src="{{ url_for('static', filename='js/results.js', v='20260216') }}"></script>
+    <script src="{{ url_for('static', filename='js/backend.js', v='20260301') }}"></script>
+    <script src="{{ url_for('static', filename='js/uiUtils.js', v='20260301') }}"></script>
+
+    <script>updateGridState()</script>
+    <script>updateSimosMethodInfo(document.getElementById("srf_method").value)</script>
+</body>
+
+</html>

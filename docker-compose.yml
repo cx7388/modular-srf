@@ -1,0 +1,8 @@
+services:
+  srf-software:
+    build:
+      context: .
+    container_name: srf-software
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

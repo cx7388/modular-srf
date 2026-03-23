@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modular SRF Weight Elicitation Tool</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260216') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav style="display: flex; justify-content: space-between; flex-wrap: wrap;">
+            <div style="display: flex; flex-direction: row; align-items: center; justify-content: center;">
+                <div>
+                    <a href="https://www.psi.ch/en/ta" target="_blank">
+                        <img src="/static/images/psi_logo.svg" alt="PSI logo" height=40px>
+                    </a>
+                </div>
+                <div>
+                    <a href="/" class="navbar-brand">
+                        Modular SRF Weight Elicitation Tool
+                    </a>
+                </div>
+            </div>
+
+            <div style="display: flex; flex-direction: row; align-items: center;">
+                <div><a href="/" class="nav-link nav-link-active" aria-current="page">Home</a></div>
+                <div><a href="/elicitation" class="nav-link">Elicitation Tool</a></div>
+            </div>
+        </nav>
+    </header>
+
+    <main class="home-main">
+        <section class="home-hero">
+            <h1>Modular SRF Weight Elicitation Tool</h1>
+            <p>
+                Elicit criteria importance weights with a modular Simos-Roy-Figueira workflow for
+                flat-criteria decision problems.
+            </p>
+            <a href="/elicitation" class="home-cta">Open Elicitation Tool</a>
+        </section>
+
+        <section class="home-grid">
+            <article class="home-card">
+                <h2>Modular Workflow</h2>
+                <p>
+                    Configure SRF, SRF-II, Robust SRF, WAP, Imprecise SRF, Belief-degree Imprecise SRF,
+                    and HFL-SRF in one interface.
+                </p>
+            </article>
+            <article class="home-card">
+                <h2>Interactive Deck-of-Cards</h2>
+                <p>
+                    Arrange criteria and blank cards directly in the browser to encode rank-order and
+                    intensity preferences.
+                </p>
+            </article>
+            <article class="home-card">
+                <h2>Transparent Results</h2>
+                <p>
+                    Export normalized weights and review robustness-oriented outputs, including ASI and
+                    PCA visualizations when applicable.
+                </p>
+            </article>
+        </section>
+
+        <section class="home-reference" aria-labelledby="home-reference-title">
+            <h2 id="home-reference-title">Reference</h2>
+            <p>
+                If you use this tool in your research or project, please cite this paper.
+            </p>
+
+            <div class="home-cite-box">
+                <button type="button" class="home-copy-btn" data-copy-target="home-citation-apa">Copy</button>
+                <pre id="home-citation-apa">Huang, R., Kadziński, M., Figueira, J. R., Corrente, S., Siskos, E., & Burgherr, P. (2026). A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria Decision Aiding. Expert Systems with Applications, 131315. https://doi.org/10.1016/j.eswa.2026.131315</pre>
+            </div>
+
+            <p>
+                For LaTeX documents, you may use this BibTeX entry:
+            </p>
+            <div class="home-cite-box">
+                <button type="button" class="home-copy-btn" data-copy-target="home-citation-bibtex">Copy</button>
+                <pre id="home-citation-bibtex">@article{huang2026modular,
+  title={A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria Decision Aiding},
+  author={Huang, River and Kadzi{\'n}ski, Mi{\l}osz and Figueira, Jos{\'e} Rui and Corrente, Salvatore and Siskos, Eleftherios and Burgherr, Peter},
+  journal={Expert Systems with Applications},
+  pages={131315},
+  year={2026},
+  publisher={Elsevier},
+  doi={10.1016/j.eswa.2026.131315}
+}</pre>
+            </div>
+
+            <div id="home-copy-feedback" class="home-copy-feedback" aria-live="polite"></div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="disclaimer">
+            <p>
+                Developed by River Huang for the <a href="https://www.psi.ch/en/lea" target="_blank">Laboratory for
+                Energy Systems Analysis (LEA)</a> at the Paul Scherrer Institute (PSI).
+            </p>
+            <p>
+                Contact: <a href="mailto:river.huang@psi.ch">river.huang@psi.ch</a>
+            </p>
+            <p>
+                Disclaimer 1: We are not responsible for the accuracy or reliability of the calculation
+                results. Users should verify the outcomes independently.
+            </p>
+            <p>
+                Disclaimer 2: This tool implements a modular subset of SRF configurations designed for practical
+                decision support. It does not include every SRF variant or every possible module combination.
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        (function () {
+            const feedback = document.getElementById('home-copy-feedback');
+            if (!feedback) return;
+
+            function setFeedback(text) {
+                feedback.textContent = text;
+                window.clearTimeout(setFeedback._timer);
+                setFeedback._timer = window.setTimeout(() => {
+                    feedback.textContent = '';
+                }, 1800);
+            }
+
+            async function copyText(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return;
+                }
+
+                const area = document.createElement('textarea');
+                area.value = text;
+                area.setAttribute('readonly', '');
+                area.style.position = 'absolute';
+                area.style.left = '-9999px';
+                document.body.appendChild(area);
+                area.select();
+                document.execCommand('copy');
+                document.body.removeChild(area);
+            }
+
+            document.querySelectorAll('.home-copy-btn').forEach(button => {
+                button.addEventListener('click', async () => {
+                    const targetId = button.getAttribute('data-copy-target');
+                    const target = targetId ? document.getElementById(targetId) : null;
+                    if (!target) return;
+                    try {
+                        await copyText(target.textContent.trim());
+                        setFeedback('Citation copied.');
+                    } catch (error) {
+                        setFeedback('Copy failed. Please copy manually.');
+                    }
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

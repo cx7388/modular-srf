@@ -1,0 +1,718 @@
+/*******************************************************************************
+ * SRF Method Interface Styles
+ * 
+ * A comprehensive stylesheet for the Simos' Revised Framework (SRF) web interface.
+ * Organized in sections:
+ * 1. CSS Variables - Theme Colors
+ * 2. Base Styles
+ * 3. Method Instructions Section
+ * 4. Card Drop Zone
+ * 5. Cards and Interactive Elements
+ * 6. Control Buttons
+ * 7. Form Controls and Input Fields
+ * 8. Results Display
+ * 9. Footer
+ *******************************************************************************/
+
+/* =============================================================================
+   1. CSS Variables - Theme Colors
+   Centralized color management for consistent theming and easy modifications
+============================================================================= */
+:root {
+    --color-header-bg: #325d88;      /* Primary brand color */
+    --color-header-text: #fff;        /* Header text color */
+    --color-background: #fff;         /* Main background */
+    --color-footer-bg: rgb(248, 249, 250); /* Footer and page background */
+    --color-drop-zone-bg: #fff;       /* Card drop area background */
+    --color-drop-zone-text: #9f9f9f;  /* Placeholder text color */
+    --color-main-text: #3e3f3a;       /* Primary text color */
+    --color-button-bg: #325d88;       /* Button background */
+    --color-button-bg-hover: #2b4f74; /* Button hover state */
+    --color-button-text: #fff;        /* Button text color */
+    --color-form-border: #aaa;        /* Form element borders */
+    --color-table-border: #E7E9EB;    /* Table borders */
+    --color-link: #93c54b;            /* Link color */
+    --color-link-hover: #769e3c;      /* Link hover state */
+}
+
+/* =============================================================================
+   2. Base Styles
+   Core styling for basic elements and typography
+============================================================================= */
+* {
+    box-sizing: border-box;
+    font-family: 'Roboto', sans-serif;
+}
+
+body {
+    margin: 0;
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-background);
+}
+
+html {
+    background-color: var(--color-footer-bg);
+}
+
+/* Header styling with sticky positioning */
+header {
+    width: 100%;
+    background-color: var(--color-header-bg);
+    position: sticky;
+    top: 0;
+    z-index: 10000;
+    padding: 0.5rem 0;
+}
+
+header nav {
+    display: flex;
+    unicode-bidi: isolate;
+    padding-right: 0;
+    padding-left: 0.75rem;
+}
+
+header a {
+    text-decoration: none;
+    color: var(--color-header-text);
+}
+
+header .navbar-brand {
+    margin-left: 0.5rem;
+    padding-top: 0.3125rem;
+    padding-bottom: 0.3125rem;
+    margin-right: 1rem;
+    font-size: 1.25rem;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+header .nav-link {
+    padding: 0.5rem;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 22px;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.72);
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+header .nav-link:hover {
+    color: #ffffff;
+}
+
+header .nav-link.nav-link-active,
+header .nav-link[aria-current="page"] {
+    color: #ffffff;
+    border-bottom-color: #ffffff;
+    font-weight: 700;
+}
+
+/* Main content area */
+main {
+    flex: 1 0 auto;
+    width: 90%;
+    margin-left: 5%;
+    margin-bottom: 2rem;
+    align-items: center;
+    background-color: var(--color-background);
+    color: var(--color-main-text);
+}
+
+/* Link styling */
+main a,
+footer a {
+    text-decoration: underline;
+    color: var(--color-link);
+}
+
+main a:hover,
+footer a:hover {
+    color: var(--color-link-hover);
+}
+
+/* Page title */
+main > h1 {
+    text-align: center;
+    font-size: 2rem;
+    margin-top: 40px;
+    margin-bottom: 40px;
+    font-weight: 400;
+    line-height: 1.2;
+}
+
+main li {
+    margin-bottom: 0.5rem;
+}
+
+/* Method selection dropdown */
+.dropdown-menu-srf-method {
+    border: 1px solid var(--color-form-border);
+    border-radius: 0.375rem;
+    line-height: 1.5;
+    font-size: 1rem;
+    color: var(--color-main-text);
+    margin-bottom: 1rem;
+}
+
+/* =============================================================================
+   3. Method Instructions Section
+   Styling for the collapsible method description and instructions
+============================================================================= */
+.method-details-instructions {
+    display: flex;
+    flex-direction: column;
+}
+
+.method-details-instructions p {
+    display: block;
+    margin-block-start: 0;
+    margin-block-end: 0.5em;
+    line-height: 1.5;
+}
+
+/* Collapsible button styling */
+.button-collapsible {
+    background-color: var(--color-background);
+    color: var(--color-main-text);
+    cursor: pointer;
+    padding: 0.5rem 0 0 0;
+    margin: 0;
+    width: 100%;
+    border: none;
+    text-align: left;
+    outline: none;
+    font-size: 1rem;
+}
+
+/* Collapsible button arrow indicator */
+.button-collapsible:before {
+    content: "❯";
+    display: inline-block;
+    margin-right: 0.5rem;
+    margin-left: 0.2rem;
+    transform: rotate(0deg);
+    color: var(--color-link);
+}
+
+.active, .button-collapsible:hover {
+    text-shadow: 0 0 1px var(--color-drop-zone-text);
+}
+
+.active:before {
+    content: "❯";
+    display: inline-block;
+    margin-right: 0.5rem;
+    margin-left: 0.2rem;
+    transform: rotate(90deg);
+    color: var(--color-link);
+}
+
+.detailed-procedure-collapsable {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.2s ease-out;
+    margin: 0;
+}
+
+/* =============================================================================
+   4. Card Drop Zone
+   Styling for the interactive card arrangement area
+============================================================================= */
+.drop-zone-container {
+    width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: left;
+    min-height: 220px;
+    margin-bottom: 0.5%;
+    border: 2px dashed #ccc;
+    background-color: var(--color-drop-zone-bg);
+    border-radius: 8px;
+}
+
+.drop-zone {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 80px);
+    grid-template-rows: auto;
+    min-height: 120px;
+    min-width: 100%;
+    padding: 50px 20px 30px 20px;
+    gap: 12px;
+}
+
+/* Rank indicators below cards */
+.ranks-container {
+    display: grid;
+    justify-content: right;
+    grid-template-columns: repeat(auto-fill, 80px);
+    gap: 12px;
+    position: absolute;
+    bottom: 5px;
+    left: 20px;
+    padding: 0;
+    min-width: 100%;
+    text-align: center;
+}
+
+.rank {
+    font-size: 0.7rem;
+    color: var(--color-main-text);
+}
+
+/* Empty state placeholder */
+.placeholder-text {
+    position: absolute;
+    top: 40%;
+    width: 100%;
+    color: var(--color-drop-zone-text);
+    font-size: 1.5rem;
+    text-align: center;
+    vertical-align: middle;
+    display: none;
+    pointer-events: none;
+}
+
+.drop-zone.empty + .placeholder-text {
+    display: block;
+}
+
+/* Importance direction indicator */
+.importance-texts {
+    display: flex;
+    font-size: 0.8rem;
+    align-items: center;
+    text-align: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.arrow-line {
+    position: relative;
+    width: 100%;
+    height: 1px;
+    background-color: var(--color-main-text);
+    margin-top: 20px;
+    margin-bottom: 15px;
+}
+
+.arrow-line::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: -1px;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-right: 10px solid var(--color-main-text);
+}
+
+/* =============================================================================
+   5. Cards and Interactive Elements
+   Styling for draggable cards and their interactions
+============================================================================= */
+.card {
+    display: flex;
+    width: 80px;
+    height: 120px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    box-shadow: 2px 2px 5px rgba(255, 255, 255, 0.1);
+    transition: transform 0.2s;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    align-self: start;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    hyphens: auto;
+}
+
+.card:hover {
+    transform: scale(1.05);
+    cursor: pointer;
+}
+
+/* Criterion cards */
+.card.criterion {
+    background: url("/static/images/card_design.png");
+    background-size: cover;
+	color: #FFFFFF;
+    border: 1px solid #ccc;
+}
+
+/* Blank cards */
+.card.white {
+    background: url("/static/images/card_design_white.png");
+    background-size: cover;
+    color: #000000;
+    border: 1px solid #000000;
+}
+
+/* Card delete button */
+.drop-zone .card button {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-size: 0.8rem;
+    padding: 0.3rem;
+    background-color: #A82217;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    display: none;
+}
+
+.drop-zone .card button:hover {
+    background-color: #7B1108;
+}
+
+.drop-zone .card:hover button {
+    display: block;
+}
+
+/* Card stacks for source cards */
+.card-stacks {
+    display: flex;
+    gap: 5rem;
+    margin-top: 0;
+    margin-left: 5rem;
+    position: relative;
+}
+
+.stack {
+    position: relative;
+    width: 100px;
+    height: 150px;
+}
+
+.stack .card {
+    position: absolute;
+    top: calc(var(--z-index, 0) * 5px);
+    left: calc(var(--z-index, 0) * 5px);
+    z-index: calc(var(--z-index, 0));
+}
+
+/* Stack card positioning */
+.stack .card:nth-child(2) { --z-index: 1; }
+.stack .card:nth-child(3) { --z-index: 2; }
+.stack .card:nth-child(4) { --z-index: 3; }
+.stack .card:nth-child(5) { --z-index: 4; }
+
+/* Column insertion button */
+.insert-column-btn {
+    position: absolute;
+    display: none;
+    top: 25px;
+    background-color: transparent;
+    color: var(--color-button-bg);
+    font-size: 1.3rem;
+    border: none;
+    z-index: 10;
+    cursor: pointer;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.dz-container:hover .insert-column-btn {
+    display: block;
+}
+
+/* =============================================================================
+   6. Control Buttons
+   Styling for action buttons (clear, import, export, calculate)
+============================================================================= */
+.clear-button, .import-button, .export-button {
+    position: absolute;
+    top: 0;
+    padding: 3px 0;
+    width: 5rem;
+    background-color: var(--color-button-bg);
+    color: var(--color-button-text);
+    border: none;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    z-index: 1000;
+    font-weight: 500;
+    text-transform: uppercase;
+    line-height: 1.5;
+    vertical-align: middle;
+    text-align: center;
+}
+.clear-button {
+    right: 0;
+}
+.import-button {
+    right: 5.25rem;
+}
+.export-button {
+    right: 10.5rem;
+}
+
+/* Calculate and download buttons */
+.calculate-button,
+.download-button {
+    position: static;
+    padding: 0.375rem 0.75rem;
+    width: 10rem;
+    background-color: var(--color-button-bg);
+    color: var(--color-button-text);
+    border: none;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    line-height: 1.5;
+    vertical-align: middle;
+    text-align: center;
+}
+
+.calculate-button:hover,
+.download-button:hover,
+.clear-button:hover,
+.import-button:hover,
+.export-button:hover {
+    background-color: var(--color-button-bg-hover);
+}
+
+/* =============================================================================
+   7. Form Controls and Input Fields
+   Styling for input elements and form controls
+============================================================================= */
+.form-control {
+    width: 6.5rem;
+    text-align: center;
+    border: 1px solid var(--color-form-border);
+    border-radius: 0.375rem;
+    line-height: 1.5;
+}
+
+/* =============================================================================
+   8. Results Display
+   Styling for results tables and visualizations
+============================================================================= */
+.results-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: left;
+    width: 100%;
+}
+
+/* Results table */
+table {
+    margin-bottom: 2rem;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 0.9rem;
+    text-align: left;
+    border: none;
+    border-radius: 8px;
+    overflow: hidden;
+    width: 53rem;
+}
+td {
+    padding: 6px;
+    border: none;
+}
+th {
+    background-color: var(--color-button-bg);
+    color: var(--color-header-text);
+    font-weight: bold;
+    padding: 10px;
+    border: none;
+}
+tr {
+    border-bottom: 1px solid #ddd;
+}
+tr:nth-child(odd) {
+    background-color: #FFFFFF;
+    color: #000000;
+}
+tr:nth-child(even) {
+    background-color: var(--color-table-border);
+    color: #000000;
+}
+
+/* Results visualization */
+.results-boxplot {
+    width: 90rem;
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: start;
+    justify-content: left;
+    align-content: start;
+}
+
+.plot-container {
+    display: flex;
+    align-items: start;
+    justify-content: left;
+    align-content: start;
+}
+
+/* =============================================================================
+   9. Footer
+   Styling for footer content and disclaimers
+============================================================================= */
+footer {
+    background-color: var(--color-footer-bg);
+    margin-top: auto;
+    padding: 20px 0px;
+}
+
+footer .disclaimer {
+    max-width: 70%;
+    margin: 0px auto;
+}
+
+footer p {
+    display: block;
+    margin-block-start: 1rem;
+    margin-block-end: 1rem;
+    color: grey;
+    font-size: smaller;
+    margin-top: 0;
+    margin-bottom: 1rem;
+    line-height: 1.5;
+}
+
+.home-main {
+    max-width: 75rem;
+    margin: 2.5rem auto 4rem auto;
+    width: 92%;
+}
+
+.home-hero {
+    background: linear-gradient(140deg, #f0f6ff 0%, #ffffff 70%);
+    border: 1px solid #dbe6f3;
+    border-radius: 0.75rem;
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+}
+
+.home-hero h1 {
+    margin: 0 0 0.75rem 0;
+    font-size: 2rem;
+    font-weight: 500;
+}
+
+.home-hero p {
+    margin: 0 0 1.5rem 0;
+    max-width: 58rem;
+    line-height: 1.6;
+    color: #586070;
+}
+
+.home-cta {
+    display: inline-block;
+    background-color: var(--color-button-bg);
+    color: #ffffff;
+    text-decoration: none;
+    padding: 0.55rem 1rem;
+    border-radius: 0.4rem;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.home-cta:hover {
+    background-color: var(--color-button-bg-hover);
+    color: #ffffff;
+}
+
+.home-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0.9rem;
+}
+
+.home-card {
+    border: 1px solid #e3e8ef;
+    border-radius: 0.6rem;
+    padding: 1rem;
+    background-color: #ffffff;
+}
+
+.home-card h2 {
+    margin: 0 0 0.45rem 0;
+    font-size: 1.06rem;
+}
+
+.home-card p {
+    margin: 0;
+    line-height: 1.5;
+    color: #5a6372;
+    font-size: 0.95rem;
+}
+
+.home-reference {
+    margin-top: 1.8rem;
+    border: 1px solid #dbe1e9;
+    border-radius: 0.7rem;
+    background-color: #f6f8fa;
+    padding: 1.2rem;
+}
+
+.home-reference h2 {
+    margin: 0 0 0.7rem 0;
+    text-align: center;
+    font-size: 2rem;
+    font-weight: 400;
+}
+
+.home-reference p {
+    margin: 0 0 0.85rem 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    color: #3f4756;
+}
+
+.home-cite-box {
+    position: relative;
+    margin: 0.55rem 0 1rem 0;
+    border: 1px solid #cfd6df;
+    border-radius: 0.45rem;
+    background-color: #ffffff;
+}
+
+.home-cite-box pre {
+    margin: 0;
+    padding: 1.2rem 2.8rem 1rem 1rem;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    white-space: pre;
+    overflow-x: auto;
+    color: #1e2939;
+}
+
+.home-copy-btn {
+    position: absolute;
+    right: 0.55rem;
+    top: 0.5rem;
+    border: 1px solid #cfd6df;
+    border-radius: 0.35rem;
+    background-color: #ffffff;
+    color: #485366;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+
+.home-copy-btn:hover {
+    border-color: #9bb0c9;
+    color: #1f3047;
+}
+
+.home-copy-feedback {
+    min-height: 1rem;
+    font-size: 0.82rem;
+    color: #2f7d32;
+}

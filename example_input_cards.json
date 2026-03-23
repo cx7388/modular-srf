@@ -1,0 +1,93 @@
+[
+  {
+    "id": "criterion_1",
+    "name": "c",
+    "class": "criterion",
+    "col": "11",
+    "row": "1"
+  },
+  {
+    "id": "criterion_2",
+    "name": "g",
+    "class": "criterion",
+    "col": "11",
+    "row": "2"
+  },
+  {
+    "id": "criterion_3",
+    "name": "l",
+    "class": "criterion",
+    "col": "11",
+    "row": "3"
+  },
+  {
+    "id": "criterion_4",
+    "name": "d",
+    "class": "criterion",
+    "col": "10",
+    "row": "1"
+  },
+  {
+    "id": "white_card_1",
+    "name": "Blank card",
+    "class": "white",
+    "col": "9",
+    "row": "1"
+  },
+  {
+    "id": "criterion_5",
+    "name": "b",
+    "class": "criterion",
+    "col": "8",
+    "row": "1"
+  },
+  {
+    "id": "criterion_6",
+    "name": "f",
+    "class": "criterion",
+    "col": "8",
+    "row": "2"
+  },
+  {
+    "id": "criterion_7",
+    "name": "i",
+    "class": "criterion",
+    "col": "8",
+    "row": "3"
+  },
+  {
+    "id": "criterion_8",
+    "name": "j",
+    "class": "criterion",
+    "col": "8",
+    "row": "4"
+  },
+  {
+    "id": "criterion_9",
+    "name": "e",
+    "class": "criterion",
+    "col": "7",
+    "row": "1"
+  },
+  {
+    "id": "criterion_10",
+    "name": "a",
+    "class": "criterion",
+    "col": "6",
+    "row": "1"
+  },
+  {
+    "id": "criterion_11",
+    "name": "h",
+    "class": "criterion",
+    "col": "6",
+    "row": "2"
+  },
+  {
+    "id": "criterion_12",
+    "name": "k",
+    "class": "criterion",
+    "col": "5",
+    "row": "1"
+  }
+]

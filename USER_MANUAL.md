@@ -1,0 +1,1277 @@
+# Modular SRF Weight Elicitation Tool - User Manual
+
+**Version:** 1.0  
+**Date:** February 28, 2026  
+**Author:** River Huang (river.huang@psi.ch)  
+**Developed for:** Laboratory for Energy Systems Analysis (LEA), Paul Scherrer Institute (PSI)
+
+---
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [Installation](#2-installation)
+3. [Getting Started](#3-getting-started)
+4. [User Interface Overview](#4-user-interface-overview)
+5. [Step-by-Step Guide](#5-step-by-step-guide)
+6. [SRF Methods Explained](#6-srf-methods-explained)
+7. [Understanding the Results](#7-understanding-the-results)
+8. [Import and Export Features](#8-import-and-export-features)
+9. [Advanced Usage](#9-advanced-usage)
+10. [Troubleshooting](#10-troubleshooting)
+11. [Technical Details](#11-technical-details)
+12. [References](#12-references)
+
+---
+
+## 1. Introduction
+
+### 1.1 What is the Modular SRF Weight Elicitation Tool?
+
+The Modular SRF Weight Elicitation Tool is a browser-based application designed to help decision-makers determine the importance weights of criteria in multi-criteria decision-making problems. It implements the revised Simos' method and several of its variants, collectively known as the Simos-Roy-Figueira (SRF) framework.
+
+### 1.2 When Should You Use This Tool?
+
+Use this tool when you need to:
+- Assign importance weights to multiple decision criteria
+- Elicit preferences from decision-makers or experts
+- Maintain transparency in the weight-setting process
+- Analyze the robustness of criteria weights
+- Handle uncertainty in preference information
+
+### 1.3 Key Features
+
+- **Interactive Deck-of-Cards Interface**: Arrange criteria cards visually to express preferences
+- **Multiple SRF Configurations**: Choose from 8 different methods (SRF, SRF-II, Robust SRF, WAP, Imprecise SRF, Belief-degree Imprecise SRF, HFL-SRF, and Modular SRF)
+- **Real-Time Calculations**: Immediate weight computation and normalization
+- **Robustness Analysis**: ASI values, distribution plots, and PCA visualizations
+- **Import/Export**: Save and load configurations in JSON format
+- **Export Results**: Download results to Excel (XLSX) format
+- **No Installation Required**: Runs entirely in your web browser
+
+---
+
+## 2. Installation
+
+### 2.1 System Requirements
+
+- **Operating System**: Windows, macOS, or Linux
+- **Python**: Version 3.8 or higher
+- **Web Browser**: Modern browser (Chrome, Firefox, Safari, or Edge)
+- **Memory**: At least 2 GB RAM recommended
+- **Disk Space**: Approximately 500 MB for virtual environment and dependencies
+
+### 2.2 Installation Steps
+
+#### Step 1: Clone or Download the Repository
+
+```bash
+# If using git
+git clone [repository-url]
+cd srf-software
+
+# Or download and extract the ZIP file
+```
+
+#### Step 2: Create a Virtual Environment
+
+**On Windows:**
+```bash
+python -m venv venv
+.\venv\Scripts\activate
+```
+
+**On macOS/Linux:**
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+#### Step 3: Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+This will install:
+- Flask (web framework)
+- NumPy and Pandas (data processing)
+- Scikit-learn (statistical analysis)
+- PuLP and HiGHS (optimization solvers)
+- Additional supporting libraries
+
+#### Step 4: Verify Installation
+
+After installation, you should see the following packages installed:
+- Flask 3.1.0
+- numpy 2.2.5
+- pandas 2.2.3
+- scikit-learn 1.5.2
+- pulp 2.9.0
+- highspy 1.8.1
+
+---
+
+## 3. Getting Started
+
+### 3.1 Launching the Application
+
+1. Open a terminal/command prompt
+2. Navigate to the project directory
+3. Activate the virtual environment (if not already activated)
+4. Start the Flask server:
+
+```bash
+python -m flask --app simos_method run --port 8000
+```
+
+5. Open your web browser and navigate to:
+```
+http://localhost:8000
+```
+
+### 3.2 First Look
+
+Upon opening the application, you'll see the **Home page** with:
+- Navigation menu (Home, Elicitation Tool)
+- Brief description of the tool
+- Three key feature cards
+- Citation information
+
+Click on **"Open Elicitation Tool"** or use the navigation menu to access the main application.
+
+### 3.3 Quick Start Example
+
+Let's perform a simple weight elicitation:
+
+1. On the Elicitation Tool page, you'll see **criterion cards** and **blank cards** on the right side
+2. Drag criterion cards to the drop zone and arrange them from left (most important) to right (least important)
+3. Insert blank cards between criteria to indicate preference intensity
+4. Set the **z-value** (ratio between most and least important criteria)
+5. Click **"Calculate"** to compute the weights
+6. Review the results displayed below
+
+---
+
+## 4. User Interface Overview
+
+### 4.1 Main Components
+
+#### Navigation Bar
+- **PSI Logo**: Link to Paul Scherrer Institute
+- **Home**: Return to the home page
+- **Elicitation Tool**: Access the main application
+
+#### Method Selection Dropdown
+Select from 8 SRF configurations:
+- Simos-Roy-Figueira (SRF)
+- SRF-II
+- Robust SRF
+- Assessment Through Prioritization (WAP)
+- Imprecise SRF
+- Belief-degree Imprecise SRF
+- Hesitant Fuzzy Linguistic (HFL)-SRF
+- Modular SRF
+
+#### Method Instructions Panel
+- Displays the full name and reference for the selected method
+- Collapsible user guidelines section
+- Links to academic papers (DOI links)
+
+#### Card Stacks (Right Side)
+- **Criterion Cards** (blue): Represent your decision criteria
+- **Blank Cards** (white): Used to express preference intensity
+
+#### Drop Zone (Center)
+- Main working area where you arrange cards
+- Horizontal arrow indicating "More important" → "Less important"
+- Drag and drop interface
+- Column insertion button (⊕) to add blank columns
+
+#### Control Buttons
+- **Import** (📥): Load a saved configuration
+- **Export** (📤): Save current configuration
+- **Clear** (🧹): Remove all cards from the drop zone
+
+#### Input Parameters
+- **z-value**: Global ratio between most and least important groups
+- **e₀-value** (SRF-II only): Blank cards to hypothetical zero criterion
+- **w-value**: Decimal precision for final weights
+
+#### Action Buttons
+- **Calculate** (🖩): Compute the criteria weights
+- **Export to XLSX** (📄): Download results to Excel
+
+#### Results Section
+- Weight tables
+- ASI (Acceptability Sum Index) values
+- Distribution plots (box plots)
+- PCA (Principal Component Analysis) visualizations
+
+---
+
+## 5. Step-by-Step Guide
+
+### 5.1 Defining Your Criteria
+
+#### Step 1: Add Criteria
+1. Click on a **criterion card** in the criterion stack
+2. Edit the text to name your criterion (e.g., "Cost", "Quality", "Safety")
+3. Press Enter or click outside to confirm
+4. Drag the card to the drop zone
+
+#### Step 2: Add More Criteria
+- Repeat the process for all your criteria
+- You can add as many criteria as needed (typically 3-20)
+- You can generate more cards by clicking existing ones in the stack
+
+### 5.2 Ranking Criteria
+
+#### Basic Ranking
+1. Arrange cards from **left to right** in order of importance
+   - Leftmost = Most important
+   - Rightmost = Least important
+
+#### Equal Importance (Ex Aequo)
+- Place multiple cards in the same column to indicate equal importance
+- Drag one card on top of another to create a column with multiple cards
+
+#### Inserting Columns
+- Click the **column insertion button** (⊕) to add a new blank column
+- This helps separate cards more clearly
+
+### 5.3 Expressing Preference Intensity with Blank Cards
+
+Blank cards encode the **intensity of preference** between successive groups:
+
+- **0 blank cards** between groups = 1 unit of difference
+- **1 blank card** between groups = 2 units of difference  
+- **2 blank cards** between groups = 3 units of difference
+- **n blank cards** between groups = (n+1) units of difference
+
+#### Example:
+```
+[Criterion A] [blank] [blank] [Criterion B] [Criterion C]
+```
+This means:
+- A is 3 units more important than B (2 blank cards)
+- B is 1 unit more important than C (0 blank cards)
+
+### 5.4 Setting Parameters
+
+#### Z-Value (Global Ratio)
+- **Definition**: The ratio between the weight of the most important group and the least important group
+- **Default**: 6.5
+- **Range**: 1.5 to 1000
+- **Example**: z=10 means the most important criterion is 10 times more important than the least important
+
+#### E₀-Value (SRF-II only)
+- **Definition**: Number of blank cards between the least important criterion and a hypothetical "zero criterion"
+- **Default**: 4
+- **Range**: 0 to 999
+- **Purpose**: Provides an alternative to the z-value
+
+#### W-Value (Precision)
+- **Definition**: Number of decimal places for final weights
+- **Default**: 1
+- **Range**: 0 to 2
+- **Example**: w=2 gives weights like 0.23, w=1 gives 0.2, w=0 gives 0
+
+### 5.5 Calculating Weights
+
+1. Verify your card arrangement is complete
+2. Check that all criteria are included
+3. Confirm your parameter values
+4. Click the **"Calculate"** button
+5. Wait for the computation (usually instant to a few seconds)
+6. Review the results in the Results section below
+
+---
+
+## 6. SRF Methods Explained
+
+### 6.1 Simos-Roy-Figueira (SRF) - The Original Method
+
+**When to Use**: Standard scenarios with precise preference information
+
+**How It Works**:
+1. Rank criteria using cards
+2. Use blank cards to express intensity
+3. Provide global z-value
+4. Model computes normalized weights
+
+**Key Reference**: Figueira & Roy (2002), DOI: 10.1016/S0377-2217(01)00370-8
+
+**Advantages**:
+- Simple and intuitive
+- Well-established method
+- Transparent process
+
+### 6.2 SRF-II - Zero-Criterion Approach
+
+**When to Use**: When it's easier to think about absolute importance rather than relative ratios
+
+**How It Works**:
+1. Same ranking and blank cards as SRF
+2. Instead of z, specify e₀ (distance to "zero importance")
+3. Weights derived from this absolute reference
+
+**Key Reference**: Corrente et al. (2021), DOI: 10.1007/s12351-020-00611-4
+
+**Advantages**:
+- More intuitive for some users
+- Avoids thinking about ratios
+- Natural reference point
+
+### 6.3 Robust SRF
+
+**When to Use**: When you want to explore the space of compatible weights
+
+**How It Works**:
+1. Same input as SRF
+2. Explores entire feasible weight region
+3. Provides representative weights plus robustness analysis
+
+**Key Reference**: Sepehr & Kadziński (2015), DOI: 10.1016/j.ejor.2015.04.037
+
+**Advantages**:
+- Shows variability in compatible weights
+- ASI values for robustness assessment
+- Distribution visualizations
+
+**Output Includes**:
+- Normalized weights
+- ASI (Acceptability Sum Index) values
+- Box plots showing weight distributions
+- PCA plots (when applicable)
+
+### 6.4 Assessment Through Prioritization (WAP)
+
+**When to Use**: When you can provide local ratios between successive ranks
+
+**How It Works**:
+1. Rank criteria (no blank cards needed)
+2. For each pair of successive ranks, provide ratio interval [z_min, z_max]
+3. Model combines all local constraints
+
+**Key Reference**: Michalski et al. (2017), DOI: 10.1007/s12351-016-0280-7
+
+**Advantages**:
+- Finer control over preferences
+- No need for blank cards
+- Can express different intensities between different rank pairs
+
+### 6.5 Imprecise SRF
+
+**When to Use**: When you're uncertain about exact preference intensities
+
+**How It Works**:
+1. Rank criteria and identify relevant gaps
+2. For each gap, provide interval [e_min, e_max] instead of exact number
+3. Provide interval for z-value [z_min, z_max]
+4. Model handles interval constraints
+
+**Key Reference**: Kadziński et al. (2021), DOI: 10.1016/j.ejor.2020.09.036
+
+**Advantages**:
+- Accommodates uncertainty
+- More realistic in practice
+- Still produces actionable weights
+
+### 6.6 Belief-Degree Imprecise SRF
+
+**When to Use**: When you can assign probabilities to different scenarios
+
+**How It Works**:
+1. Rank criteria
+2. For each gap and z-value, provide pairs (value, probability)
+3. Probabilities must sum to 1
+4. Model aggregates probabilistic inputs
+
+**Key Reference**: Kadziński et al. (2022), DOI: 10.1080/01605682.2022.2035271
+
+**Advantages**:
+- Captures probabilistic beliefs
+- More information than simple intervals
+- Refined robustness diagnostics
+
+### 6.7 Hesitant Fuzzy Linguistic (HFL)-SRF
+
+**When to Use**: When you prefer linguistic terms over numerical values
+
+**How It Works**:
+1. Rank criteria
+2. For successive ranks, choose linguistic intervals (e.g., "Low", "Medium", "High")
+3. Uses predefined fuzzy sets
+4. Model converts to numerical constraints
+
+**Key Reference**: Zhang et al. (2022), DOI: 10.1016/j.asoc.2022.108979
+
+**Advantages**:
+- Natural for non-technical users
+- No need to think numerically
+- Handles linguistic uncertainty
+
+**Scales**:
+- Rank-gap terms: 1-5 scale
+- Global contrast terms: 1-10 scale
+
+### 6.8 Modular SRF
+
+**When to Use**: When you need full customization of the SRF framework
+
+**How It Works**:
+1. Use modular questionnaire to select components:
+   - **Procedural**: Standard, zero-criterion, or direct-ratio
+   - **Informational**: Precise, interval, fuzzy, or probabilistic
+   - **Normative**: Anti-dictatorship, minimum-weight constraints
+   - **Analytical**: Single-vector or variability analysis
+2. App assembles custom SRF model
+3. Computes weights and diagnostics
+
+**Key Reference**: Huang et al. (2026), DOI: 10.1016/j.eswa.2026.131315
+
+**Advantages**:
+- Maximum flexibility
+- Can combine features from different variants
+- Tailored to specific decision context
+
+---
+
+## 7. Understanding the Results
+
+### 7.1 Weight Tables
+
+After clicking "Calculate", you'll see a table with:
+
+| Criterion | Weight | Percentage |
+|-----------|--------|------------|
+| Safety    | 0.35   | 35%        |
+| Cost      | 0.30   | 30%        |
+| Quality   | 0.25   | 25%        |
+| Speed     | 0.10   | 10%        |
+
+**Interpretation**:
+- Weights are normalized (sum to 1.0 or 100%)
+- Higher weight = more important criterion
+- Can be used directly in MCDA methods (e.g., ELECTRE, PROMETHEE)
+
+### 7.2 ASI Values (Robust Methods)
+
+**ASI (Acceptability Sum Index)**: Measures how often a criterion is ranked at each position across compatible weight spaces.
+
+Example ASI Table:
+| Criterion | Rank 1 | Rank 2 | Rank 3 | Rank 4 |
+|-----------|--------|--------|--------|--------|
+| Safety    | 0.95   | 0.05   | 0.00   | 0.00   |
+| Cost      | 0.05   | 0.85   | 0.10   | 0.00   |
+| Quality   | 0.00   | 0.10   | 0.80   | 0.10   |
+| Speed     | 0.00   | 0.00   | 0.10   | 0.90   |
+
+**Interpretation**:
+- Values between 0 and 1
+- Higher ASI = more robust/stable ranking
+- ASI close to 1 in one column = clear rank position
+- Spread ASI values = ambiguous ranking
+
+### 7.3 Distribution Plots (Box Plots)
+
+For robust methods, you'll see box plots showing:
+- **Box**: Interquartile range (IQR) - middle 50% of samples
+- **Line in Box**: Median weight
+- **Whiskers**: Full range of compatible weights
+- **Outliers**: (if any) unusual weight values
+
+**Interpretation**:
+- Wide box = high variability/uncertainty
+- Narrow box = stable/robust weight
+- Compare widths to assess relative robustness
+
+### 7.4 PCA Plots
+
+**PCA (Principal Component Analysis)**: 2D visualization of weight space
+
+**Elements**:
+- **Points**: Sample weight vectors
+- **Clusters**: Groups of similar weights
+- **Distribution**: Spread indicates robustness
+
+**Interpretation**:
+- Tight cluster = stable recommendations
+- Scattered points = high variability
+- Multiple clusters = potentially different preference scenarios
+
+### 7.5 Statistical Summaries
+
+Depending on the method, you may see additional statistics:
+- **Mean weights**: Average across samples
+- **Standard deviation**: Measure of variability
+- **Min/Max values**: Range of compatible weights
+- **Confidence intervals**: Statistical bounds on weights
+
+---
+
+## 8. Import and Export Features
+
+### 8.1 Exporting Your Configuration
+
+**Purpose**: Save your current card arrangement and parameters for later use
+
+**Steps**:
+1. Arrange your cards and set parameters
+2. Click the **"Export"** button
+3. A JSON file will be downloaded to your computer
+4. Default filename: `srf_configuration_[timestamp].json`
+
+**What's Saved**:
+- Card positions and labels
+- Blank card positions
+- Selected method
+- Parameter values (z, e₀, w)
+- Additional method-specific settings
+
+### 8.2 Importing a Configuration
+
+**Purpose**: Load a previously saved configuration
+
+**Steps**:
+1. Click the **"Import"** button
+2. Select a JSON file from your computer
+3. The interface will automatically populate with the saved configuration
+4. Review and modify if needed
+5. Click "Calculate" to compute weights
+
+**Use Cases**:
+- Resuming previous work
+- Comparing different scenarios
+- Sharing configurations with colleagues
+- Version control of decision models
+
+### 8.3 Exporting Results to Excel
+
+**Purpose**: Download calculation results for further analysis or reporting
+
+**Steps**:
+1. After calculating weights, click **"Export to XLSX"**
+2. An Excel file will be downloaded
+3. Default filename: `srf_results_[timestamp].xlsx`
+
+**What's Included**:
+- Sheet 1: Normalized weights table
+- Sheet 2: ASI values (if applicable)
+- Sheet 3: Weight distribution statistics (if applicable)
+- Sheet 4: Input configuration summary
+
+**File Format**: Microsoft Excel (.xlsx) format, compatible with Excel, LibreOffice, Google Sheets
+
+---
+
+## 9. Advanced Usage
+
+### 9.1 Handling Large Numbers of Criteria
+
+**Recommendations**:
+- Consider hierarchical structuring (group related criteria)
+- Use robust methods to assess stability
+- Verify that all criteria are truly necessary
+- Consider sensitivity analysis
+
+**Practical Limits**:
+- The tool can handle 50+ criteria
+- However, cognitive limits suggest 7-20 criteria is ideal
+- Performance may slow with 100+ criteria
+
+### 9.2 Dealing with Tied Weights
+
+If two criteria receive identical weights:
+
+**Causes**:
+- Placed in same column (by design)
+- Insufficient precision (increase w-value)
+- Constraints force equal weights
+
+**Solutions**:
+- Increase decimal precision (w-value)
+- Use blank cards to differentiate
+- Consider if equal weights are acceptable
+
+### 9.3 Inconsistency Handling
+
+The tool may detect inconsistencies in your preferences.
+
+**Types of Inconsistency**:
+- Conflicting intensity signals
+- Infeasible constraint combinations
+- Over-constrained problem
+
+**Tool Response**:
+- May suggest removing/adjusting blank cards
+- May relax certain constraints automatically
+- Provides diagnostic messages
+
+**User Actions**:
+- Review the inconsistency message
+- Adjust card arrangement
+- Reduce number of blank cards
+- Reconsider parameter values
+
+### 9.4 Sensitivity Analysis
+
+**Manual Approach**:
+1. Calculate weights with base configuration
+2. Export results
+3. Modify parameters (e.g., change z-value)
+4. Calculate again
+5. Compare results
+
+**What to Vary**:
+- z-value: Try z±20%
+- Blank cards: Add or remove one
+- Method: Compare SRF vs. Robust SRF
+
+**Interpretation**:
+- Small changes in weights = robust results
+- Large changes = sensitive to assumptions
+- May warrant more careful elicitation
+
+### 9.5 Using with Decision Analysis Methods
+
+The weights from this tool can be used with:
+- **ELECTRE** methods (outranking)
+- **PROMETHEE** methods (outranking)
+- **TOPSIS** (distance-based)
+- **Weighted Sum** models
+- **AHP** (as calibration reference)
+- **MAUT/MAVT** (multi-attribute utility)
+
+**Integration Steps**:
+1. Elicit weights using this tool
+2. Export weights to Excel
+3. Import weights into your MCDA software
+4. Proceed with alternative evaluation
+
+---
+
+## 10. Troubleshooting
+
+### 10.1 Installation Issues
+
+**Problem**: `pip install` fails
+
+**Solutions**:
+- Ensure Python 3.8+ is installed: `python --version`
+- Update pip: `pip install --upgrade pip`
+- Install packages individually if batch install fails
+- Check internet connection
+- Use a VPN if behind firewall
+
+**Problem**: Virtual environment not activating
+
+**Solutions**:
+- Windows: Ensure execution policy allows scripts:
+  ```powershell
+  Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+  ```
+- Make sure you're in the correct directory
+- Try recreating the virtual environment: `python -m venv venv --clear`
+
+### 10.2 Server Issues
+
+**Problem**: Server won't start
+
+**Solutions**:
+- Check if port 8000 is already in use
+- Try a different port: `python -m flask --app simos_method run --port 8080`
+- Check Flask installation: `flask --version`
+- Verify all dependencies are installed
+
+**Problem**: "Module not found" errors
+
+**Solutions**:
+- Activate virtual environment
+- Reinstall requirements: `pip install -r requirements.txt`
+- Check Python path
+
+**Problem**: Server crashes during calculation
+
+**Solutions**:
+- Check if input is valid
+- Try with fewer criteria
+- Review browser console for error messages
+- Check server terminal for Python errors
+
+### 10.3 Interface Issues
+
+**Problem**: Cards won't drag
+
+**Solutions**:
+- Refresh the page (F5)
+- Clear browser cache
+- Try a different browser
+- Check if JavaScript is enabled
+
+**Problem**: Calculate button does nothing
+
+**Solutions**:
+- Check browser console for errors (F12)
+- Ensure at least one criterion card is in the drop zone
+- Verify parameter values are within valid ranges
+- Try refreshing the page
+
+**Problem**: Results don't appear
+
+**Solutions**:
+- Check if calculation completed (look for loading indicator)
+- Scroll down to results section
+- Check browser console for errors
+- Try with a simpler configuration first
+
+### 10.4 Calculation Issues
+
+**Problem**: "No feasible solution" error
+
+**Solutions**:
+- Reduce number of blank cards
+- Adjust z-value to be less extreme
+- Remove some constraints
+- Simplify card arrangement
+
+**Problem**: Unexpected weight values
+
+**Solutions**:
+- Verify card arrangement matches intent
+- Check if blank cards are placed correctly
+- Review parameter values
+- Try SRF method first (simplest)
+- Review method guidelines
+
+**Problem**: ASI values all zero
+
+**Solutions**:
+- May indicate computational issue
+- Try with fewer criteria
+- Refresh and recalculate
+- Check method selection
+
+### 10.5 Data Issues
+
+**Problem**: Import file not loading
+
+**Solutions**:
+- Verify file is valid JSON format
+- Check file was exported from this tool
+- Try opening file in text editor to verify structure
+- Re-export from a working configuration
+
+**Problem**: Export to XLSX fails
+
+**Solutions**:
+- Check disk space
+- Verify download folder is writable
+- Try exporting to different location
+- Check browser download settings
+
+---
+
+## 11. Technical Details
+
+### 11.1 System Architecture
+
+**Frontend**:
+- HTML5, CSS3, JavaScript (ES6+)
+- Drag-and-drop API
+- Plotly.js for visualizations
+- XLSX.js for Excel export
+
+**Backend**:
+- Flask 3.1.0 (Python web framework)
+- RESTful API architecture
+- JSON data exchange
+
+**Computation**:
+- NumPy for numerical operations
+- Pandas for data manipulation
+- Scikit-learn for PCA and statistical analysis
+- PuLP for optimization modeling
+- HiGHS as optimization solver
+
+**Core project files**:
+- `simos_method/__init__.py`: Flask routes, input normalization, deck preprocessing, and response formatting
+- `simos_method/static/python/srf_methods.py`: SRF structure resolution, optimization, sampling, and inconsistency analysis
+- `simos_method/static/python/utils.py`: rounding, ASI, and PCA export helpers
+- `simos_method/static/python/freeopt.py`: compatibility layer that maps the used subset of the `gurobipy` API to free solvers
+- `simos_method/static/js/uiUtils.js`: method-specific inputs and modular questionnaire behavior
+- `simos_method/static/js/backend.js`: browser-side payload serialization and POST `/calculate`
+- `simos_method/static/js/results.js`: results table plus boxplot/PCA rendering
+
+**Request flow**:
+1. The browser collects the card arrangement and method-specific inputs.
+2. `backend.js` sends them to the Flask `/calculate` endpoint.
+3. `simos_method/__init__.py` validates and reshapes the payload into the format expected by the solver layer.
+4. `srf_methods.py` runs the requested SRF workflow and writes any plot-support files.
+5. The browser renders the returned table and loads the variability/PCA JSON files when needed.
+
+### 11.2 Optimization Models
+
+The tool formulates **linear programming (LP)** problems:
+
+**Variables**: Criteria weights w₁, w₂, ..., wₙ
+
+**Constraints**:
+- Normalization: Σwᵢ = 1
+- Non-negativity: wᵢ ≥ 0
+- Rank-order: wᵢ ≥ wⱼ if i more important than j
+- Intensity: Based on blank cards
+- Ratio: Based on z-value
+- Additional: Method-specific constraints
+
+**Objective**: Varies by method (e.g., maximize sum, minimize deviation)
+
+### 11.3 Solver Configuration
+
+**Primary Solver**: HiGHS (High-Performance LP solver)
+- Open-source
+- Fast and reliable
+- Handles large problems
+
+**Fallback Solver**: PuLP's default solvers
+- CBC (COIN-OR Branch and Cut)
+- Used if HiGHS unavailable
+
+**Solver Warmup**: 
+- First call to solver can be slow
+- Tool "warms up" solver at startup
+- Subsequent calculations are fast
+
+**Useful environment variables**:
+- `FREEOPT_SOLVER=auto|highs|cbc`: choose the preferred free solver backend
+- `FREEOPT_THREADS=<int>`: limit solver threads
+- `FREEOPT_TIME_LIMIT_SEC=<int>`: apply a solver time limit
+- `SRF_SKIP_SOLVER_WARMUP=1`: disable the startup warmup solve
+
+### 11.4 Data Storage
+
+**Configuration Files**:
+- Location: `simos_method/static/data/`
+- `simos_instructions.json`: Method descriptions
+- `srf_samples.json`: Cached random samples (for robust methods)
+- `pca_output.json`: Cached PCA results
+
+**File Formats**:
+- Input/Output: JSON
+- Results Export: XLSX (Excel)
+
+**Browser Storage**:
+- No persistent storage in browser
+- All data lost on page refresh unless exported
+
+**Runtime behavior**:
+- `srf_samples.json` and `pca_output.json` are recreated during each calculation
+- The backend writes placeholder JSON before solving so the frontend does not hit temporary 404 errors while plots are loading
+
+### 11.5 Performance Considerations
+
+**Typical Performance**:
+- 5-10 criteria: Instant (<1 second)
+- 20 criteria: 1-2 seconds
+- 50 criteria: 5-10 seconds
+- 100 criteria: 30-60 seconds (not recommended)
+
+**Robust Methods**:
+- Generate 10,000 random samples by default
+- Adds 5-30 seconds depending on criteria count
+- Results cached to disk for reuse
+
+**Optimization**:
+- Warm start solver at launch
+- Cache results when possible
+- Use efficient LP formulations
+
+### 11.6 Browser Compatibility
+
+**Fully Supported**:
+- Google Chrome 90+
+- Mozilla Firefox 88+
+- Microsoft Edge 90+
+- Safari 14+
+
+**Partial Support** (may have minor issues):
+- Older browsers (consider updating)
+- Mobile browsers (interface designed for desktop)
+
+**Requirements**:
+- JavaScript enabled
+- Cookies enabled
+- Modern ES6 support
+- Canvas support (for visualizations)
+
+### 11.7 Security and Privacy
+
+**Data Privacy**:
+- All computation happens locally on your machine
+- No data sent to external servers
+- No tracking or analytics
+
+**Security**:
+- Local deployment only
+- No authentication required
+- No database (stateless)
+- File uploads validated (JSON only)
+
+**Recommendations**:
+- Do not expose to public internet
+- Use on trusted networks only
+- Keep virtual environment isolated
+
+### 11.8 Maintenance Notes
+
+**Frontend/backend synchronization**:
+- The shape of `zValue` and `eValue` depends on the selected method. When changing inputs, update both the serializer in `simos_method/static/js/backend.js` and the parser in `simos_method/__init__.py`.
+- Modular SRF defaults are defined in both frontend and backend logic. Keep `getModularDefaultOptions()` in `uiUtils.js` aligned with `MODULAR_DEFAULT_OPTIONS` in `srf_methods.py`.
+
+**Method behavior**:
+- Not every method uses white cards from the visual deck. WAP and several imprecise variants intentionally ignore or lock them.
+- Most structural changes eventually need updates in `simos_method/static/python/srf_methods.py`, because that file resolves SRF modes and drives the optimization flow.
+
+**Verification**:
+- There is no dedicated automated test suite in the repository at the moment.
+- After changing computational logic, run at least one crisp method and one variability-producing method through the UI.
+- If you touched Python solver code, a quick syntax check with `py_compile` is a useful first smoke test.
+
+---
+
+## 12. References
+
+### 12.1 Primary Reference
+
+Please cite this tool using:
+
+**APA Format**:
+```
+Huang, R., Kadziński, M., Figueira, J. R., Corrente, S., Siskos, E., & Burgherr, P. (2026). 
+A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria 
+Decision Aiding. Expert Systems with Applications, 131315. 
+https://doi.org/10.1016/j.eswa.2026.131315
+```
+
+**BibTeX Format**:
+```bibtex
+@article{huang2026modular,
+  title={A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria Decision Aiding},
+  author={Huang, River and Kadzi{\'n}ski, Mi{\l}osz and Figueira, Jos{\'e} Rui and Corrente, Salvatore and Siskos, Eleftherios and Burgherr, Peter},
+  journal={Expert Systems with Applications},
+  pages={131315},
+  year={2026},
+  publisher={Elsevier},
+  doi={10.1016/j.eswa.2026.131315}
+}
+```
+
+### 12.2 Method-Specific References
+
+**SRF (Original)**:
+- Figueira, J., & Roy, B. (2002). Determining the weights of criteria in the ELECTRE type methods with a revised Simos' procedure. *European Journal of Operational Research, 139*(2), 317-326. https://doi.org/10.1016/S0377-2217(01)00370-8
+
+**SRF-II**:
+- Corrente, S., Figueira, J. R., & Greco, S. (2021). The SRF-II method: A novel stochastic approach for criteria weight elicitation. *Journal of Multi-Criteria Decision Analysis, 28*(3-4), 205-221. https://doi.org/10.1007/s12351-020-00611-4
+
+**Robust SRF**:
+- Sepehr, A., & Kadziński, M. (2015). Robust ordinal regression for value functions considering imprecise preference statements. *European Journal of Operational Research, 248*(2), 655-671. https://doi.org/10.1016/j.ejor.2015.04.037
+
+**WAP**:
+- Michalski, A., Michaud, S., & Lamond, B. (2017). Weighting assessment through prioritization: A new multiple criteria method. *Journal of Multi-Criteria Decision Analysis, 24*(5-6), 267-281. https://doi.org/10.1007/s12351-016-0280-7
+
+**Imprecise SRF**:
+- Kadziński, M., Martyn, K., Cinelli, M., Słowiński, R., Corrente, S., & Greco, S. (2021). Preference disaggregation for multiple criteria sorting with partial monotonicity constraints: Application to exposure management of nanomaterials. *European Journal of Operational Research, 289*(3), 980-1002. https://doi.org/10.1016/j.ejor.2020.09.036
+
+**Belief-Degree Imprecise SRF**:
+- Kadziński, M., Martyn, K., Cinelli, M., & Słowiński, R. (2022). Robust ordinal regression for dominance-based rough set approach to multiple criteria sorting. *Journal of the Operational Research Society, 74*(4), 1107-1130. https://doi.org/10.1080/01605682.2022.2035271
+
+**HFL-SRF**:
+- Zhang, S., Zhu, J., Liu, X., & Chen, Y. (2022). Hesitant fuzzy linguistic approach for multiple criteria decision making with applications. *Applied Soft Computing, 125*, 108979. https://doi.org/10.1016/j.asoc.2022.108979
+
+### 12.3 Additional Reading
+
+**Multi-Criteria Decision Analysis**:
+- Greco, S., Ehrgott, M., & Figueira, J. R. (Eds.). (2016). *Multiple Criteria Decision Analysis: State of the Art Surveys* (2nd ed.). Springer.
+
+**ELECTRE Methods**:
+- Roy, B., & Słowiński, R. (2013). Questions guiding the choice of a multicriteria decision aiding method. *EURO Journal on Decision Processes, 1*(1-2), 69-97.
+
+**Weight Elicitation**:
+- Barron, F. H., & Barrett, B. E. (1996). Decision quality using ranked attribute weights. *Management Science, 42*(11), 1515-1523.
+
+### 12.4 Contact and Support
+
+**Developer**: River Huang  
+**Email**: river.huang@psi.ch  
+**Institution**: Paul Scherrer Institute (PSI)  
+**Laboratory**: Laboratory for Energy Systems Analysis (LEA)  
+**Website**: https://www.psi.ch/en/lea
+
+**For Questions**:
+- Technical issues: Contact developer via email
+- Method questions: Refer to academic papers
+- Feature requests: Contact developer via email
+
+**Acknowledgments**:
+This tool was developed as part of research conducted at the Laboratory for Energy Systems Analysis (LEA) at the Paul Scherrer Institute (PSI), Switzerland.
+
+---
+
+## Appendix A: Glossary
+
+**ASI (Acceptability Sum Index)**: A measure of how consistently a criterion ranks at a particular position across all compatible weight spaces.
+
+**Blank Card**: A white card used to express preference intensity between criteria.
+
+**Criterion**: A factor or dimension used to evaluate alternatives in decision-making.
+
+**Drop Zone**: The central area where you arrange criterion and blank cards.
+
+**E₀ (e-zero)**: The number of blank cards between the least important criterion and a hypothetical zero-importance criterion.
+
+**Ex Aequo**: Latin term meaning "equal"; criteria with equal importance placed in the same rank/column.
+
+**Feasible Weight Space**: The set of all weight vectors that satisfy the preference constraints.
+
+**HFL (Hesitant Fuzzy Linguistic)**: An approach using linguistic terms with fuzzy uncertainty.
+
+**LP (Linear Programming)**: Mathematical optimization method for finding the best outcome in a linear model.
+
+**Normalized Weights**: Weights scaled to sum to exactly 1.0 (or 100%).
+
+**PCA (Principal Component Analysis)**: A statistical technique for visualizing high-dimensional data in 2D or 3D.
+
+**Preference Intensity**: The strength of preference for one criterion over another.
+
+**Rank-Order**: The ordering of criteria from most to least important.
+
+**Robust Analysis**: Examination of how results vary across the feasible preference space.
+
+**SRF (Simos-Roy-Figueira)**: The revised Simos' method and its framework.
+
+**W-Value**: The number of decimal places for final weight precision.
+
+**Z-Value**: The ratio between the weight of the most important and least important criterion groups.
+
+---
+
+## Appendix B: Example Scenarios
+
+### Example 1: Energy Technology Selection
+
+**Context**: Selecting criteria weights for comparing energy technologies
+
+**Criteria**:
+1. CO₂ Emissions (environmental)
+2. Economic Cost
+3. Energy Security
+4. Social Acceptance
+5. Technical Maturity
+
+**Process**:
+1. Selected method: Robust SRF
+2. Ranking (left to right):
+   - CO₂ Emissions
+   - [1 blank card]
+   - Economic Cost
+   - Energy Security (ex aequo)
+   - [2 blank cards]
+   - Social Acceptance
+   - [1 blank card]
+   - Technical Maturity
+3. z-value: 8.0
+4. w-value: 2
+
+**Results**:
+| Criterion | Weight | ASI Rank 1 |
+|-----------|--------|------------|
+| CO₂ Emissions | 0.31 | 1.00 |
+| Economic Cost | 0.26 | 1.00 |
+| Energy Security | 0.26 | 1.00 |
+| Social Acceptance | 0.12 | 0.00 |
+| Technical Maturity | 0.05 | 0.00 |
+
+**Interpretation**: Environmental concerns dominate, with economic and security factors roughly equal.
+
+### Example 2: Supplier Selection
+
+**Context**: Manufacturing company selecting supplier evaluation weights
+
+**Criteria**:
+1. Price
+2. Quality
+3. Delivery Time
+4. Sustainability
+
+**Process**:
+1. Selected method: SRF
+2. Ranking:
+   - Quality
+   - Price (ex aequo)
+   - [1 blank card]
+   - Delivery Time
+   - [1 blank card]
+   - Sustainability
+3. z-value: 5.0
+4. w-value: 1
+
+**Results**:
+| Criterion | Weight |
+|-----------|--------|
+| Quality | 0.35 |
+| Price | 0.35 |
+| Delivery Time | 0.20 |
+| Sustainability | 0.10 |
+
+**Interpretation**: Quality and price are most important and equal, followed by delivery, with sustainability having lower priority.
+
+### Example 3: Research Grant Evaluation (with Uncertainty)
+
+**Context**: University evaluating research proposals with uncertain preferences
+
+**Criteria**:
+1. Scientific Merit
+2. Innovation
+3. Feasibility
+4. Impact
+5. Budget
+
+**Process**:
+1. Selected method: Imprecise SRF
+2. Ranking with interval blank cards:
+   - Scientific Merit
+   - [1-2 blank cards]
+   - Innovation
+   - [0-1 blank cards]
+   - Feasibility
+   - Impact (ex aequo)
+   - [1-3 blank cards]
+   - Budget
+3. z-value interval: [6.0, 9.0]
+4. w-value: 2
+
+**Results** (representative weights):
+| Criterion | Weight | Range |
+|-----------|--------|-------|
+| Scientific Merit | 0.33 | [0.30, 0.36] |
+| Innovation | 0.26 | [0.23, 0.29] |
+| Feasibility | 0.18 | [0.15, 0.21] |
+| Impact | 0.18 | [0.15, 0.21] |
+| Budget | 0.05 | [0.03, 0.07] |
+
+**Interpretation**: Scientific merit is clearly most important, but there's some uncertainty in the relative importance of innovation vs. feasibility/impact.
+
+---
+
+## Appendix C: Quick Reference Card
+
+### Essential Steps
+
+1. **Launch**: `python -m flask --app simos_method run --port 8000`
+2. **Navigate**: `http://localhost:8000`
+3. **Select Method**: Choose from dropdown
+4. **Add Criteria**: Edit and drag criterion cards
+5. **Rank**: Arrange left (important) to right (less important)
+6. **Intensity**: Insert blank cards between groups
+7. **Parameters**: Set z, e₀, and w values
+8. **Calculate**: Click calculate button
+9. **Review**: Check weights and diagnostics
+10. **Export**: Save configuration or results
+
+### Keyboard Shortcuts
+
+- **Enter**: Confirm criterion edit
+- **Escape**: Cancel criterion edit
+- **Delete**: Remove focused card (if implemented)
+- **Ctrl+S**: (Browser) Save page
+- **F5**: Refresh page
+- **F12**: Open browser developer tools
+
+### Parameter Quick Guide
+
+| Parameter | Default | Range | Purpose |
+|-----------|---------|-------|---------|
+| z-value | 6.5 | 1.5-1000 | Global ratio (most/least important) |
+| e₀-value | 4 | 0-999 | Distance to zero criterion (SRF-II) |
+| w-value | 1 | 0-2 | Decimal precision of final weights |
+
+### Common Patterns
+
+**High Differentiation**:
+- Use many blank cards
+- High z-value (8-20)
+
+**Low Differentiation**:
+- Few blank cards
+- Low z-value (2-4)
+
+**Equal Groups**:
+- Multiple cards in same column
+- No blank cards between them
+
+**High Uncertainty**:
+- Use Robust/Imprecise methods
+- Review ASI and distributions
+
+---
+
+## Appendix D: Frequently Asked Questions (FAQ)
+
+**Q1: How many criteria should I use?**  
+A: Typically 5-15 criteria is manageable. Fewer than 5 may be too simple; more than 20 becomes cognitively challenging.
+
+**Q2: Can I have zero weights?**  
+A: By default, all criteria have positive weights. Some methods allow minimum weight constraints to approach (but not reach) zero.
+
+**Q3: What if two criteria are truly equal in importance?**  
+A: Place them in the same column (ex aequo). They will receive exactly equal weights.
+
+**Q4: Should I use SRF or Robust SRF?**  
+A: Use SRF for a single weight vector. Use Robust SRF to explore variability and robustness.
+
+**Q5: What z-value should I choose?**  
+A: Common values: 5-10. Higher values (15-20) indicate strong differentiation. Lower (2-4) indicate mild differences.
+
+**Q6: Can I use this tool for multiple decision-makers?**  
+A: Yes, but each decision-maker should elicit separately, then aggregate results (e.g., average weights or compare differences).
+
+**Q7: How do I handle hierarchical criteria?**  
+A: This tool is for flat criteria. Consider hierarchical methods (e.g., AHP) or pre-aggregate sub-criteria.
+
+**Q8: What if I'm uncertain about rankings?**  
+A: Use robust methods to explore multiple rankings, or use imprecise/belief-degree methods to model uncertainty.
+
+**Q9: Can I save my work and continue later?**  
+A: Yes, use the Export button to save configuration to JSON, then Import later to resume.
+
+**Q10: Why are my ASI values all very high or very low?**  
+A: Very high ASI (close to 1) indicates robust ranking; very low may indicate computational issues or high uncertainty.
+
+**Q11: Can I use fractional blank cards?**  
+A: No, only whole blank cards. Use intervals (Imprecise SRF) for fractional differentiation.
+
+**Q12: What's the difference between SRF and SRF-II?**  
+A: SRF uses a ratio (z) between most and least important. SRF-II uses distance to hypothetical zero (e₀). Choose based on intuition.
+
+**Q13: How accurate are the weights?**  
+A: Weights precisely reflect your input preferences. Validity depends on quality of your preference elicitation.
+
+**Q14: Can I use this for real-world decisions?**  
+A: Yes, but always validate results with stakeholders and consider sensitivity analysis.
+
+**Q15: Is there a mobile version?**  
+A: The interface is designed for desktop/laptop. Mobile browsers may work but with reduced usability.
+
+---
+
+## End of User Manual
+
+**Document Version**: 1.0  
+**Last Updated**: February 28, 2026  
+**Tool Version**: Based on srf-software repository  
+
+For the latest version of this manual and the software, please contact the developer or visit the official repository.
+
+**Thank you for using the Modular SRF Weight Elicitation Tool!**
