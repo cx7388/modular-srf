@@ -7,6 +7,113 @@ function exportToXLSX(filename = 'simos_method_results.xlsx') {
     XLSX.writeFile(wb, filename);
 }
 
+const FIGURE_DOWNLOAD_CONTROL_ID = 'figure-download-controls';
+const FIGURE_DOWNLOAD_SELECT_ID = 'figure-download-format';
+const PNG_EXPORT_SCALE_300_PPI = 300 / 96;
+const SUPPORTED_FIGURE_DOWNLOAD_FORMATS = new Set(['svg', 'png', 'jpeg', 'webp']);
+
+
+function ensureFigureDownloadControls() {
+    let controls = document.getElementById(FIGURE_DOWNLOAD_CONTROL_ID);
+    if (controls) {
+        return controls;
+    }
+
+    const boxplotContainer = document.getElementById('boxplot');
+    if (!boxplotContainer?.parentNode) {
+        return null;
+    }
+
+    controls = document.createElement('div');
+    controls.id = FIGURE_DOWNLOAD_CONTROL_ID;
+    controls.setAttribute('role', 'group');
+    controls.setAttribute('aria-label', 'Figure download options');
+    Object.assign(controls.style, {
+        display: 'none',
+        alignItems: 'center',
+        gap: '0.65rem',
+        flexWrap: 'wrap',
+        margin: '1rem 0 0.75rem 0',
+        padding: '0.7rem 0.85rem',
+        border: '1px solid #dbe1e9',
+        borderRadius: '0.55rem',
+        background: '#f8fafc',
+        width: 'fit-content'
+    });
+
+    const label = document.createElement('label');
+    label.htmlFor = FIGURE_DOWNLOAD_SELECT_ID;
+    label.textContent = 'Figure download';
+    label.style.fontWeight = '600';
+
+    const select = document.createElement('select');
+    select.id = FIGURE_DOWNLOAD_SELECT_ID;
+    select.className = 'labelmaxmin form-control';
+    select.setAttribute('aria-label', 'Choose figure download format');
+    select.style.width = '12rem';
+    select.innerHTML = `
+        <option value="svg" selected>SVG</option>
+        <option value="png">PNG (300 ppi)</option>
+        <option value="jpeg">JPEG (300 ppi)</option>
+        <option value="webp">WebP (300 ppi)</option>
+    `;
+
+    const hint = document.createElement('span');
+    hint.textContent = 'Applies to the download button in each plot toolbar. SVG is vector; raster exports use ~300 ppi scaling.';
+    Object.assign(hint.style, {
+        fontSize: '0.82rem',
+        color: '#5a6372'
+    });
+
+    controls.append(label, select, hint);
+    boxplotContainer.parentNode.insertBefore(controls, boxplotContainer);
+    return controls;
+}
+
+
+function setFigureDownloadControlsVisible(isVisible) {
+    const controls = ensureFigureDownloadControls();
+    if (controls) {
+        controls.style.display = isVisible ? 'flex' : 'none';
+    }
+}
+
+
+function getSelectedFigureDownloadFormat() {
+    const format = document.getElementById(FIGURE_DOWNLOAD_SELECT_ID)?.value;
+    return SUPPORTED_FIGURE_DOWNLOAD_FORMATS.has(format) ? format : 'svg';
+}
+
+
+function getFigureDownloadOptions(filename, fallbackWidth, fallbackHeight, plotElement = null) {
+    const format = getSelectedFigureDownloadFormat();
+    const width = Number(plotElement?._fullLayout?.width) || fallbackWidth;
+    const height = Number(plotElement?._fullLayout?.height) || fallbackHeight;
+
+    return {
+        format,
+        filename,
+        width,
+        height,
+        scale: format === 'svg' ? 1 : PNG_EXPORT_SCALE_300_PPI
+    };
+}
+
+
+function buildPlotDownloadConfig(filename, fallbackWidth, fallbackHeight) {
+    return {
+        modeBarButtonsToRemove: ['toImage'],
+        modeBarButtonsToAdd: [{
+            name: 'Download figure',
+            icon: Plotly.Icons.camera,
+            click: (gd) => Plotly.downloadImage(
+                gd,
+                getFigureDownloadOptions(filename, fallbackWidth, fallbackHeight, gd)
+            )
+        }]
+    };
+}
+
 
 function createTableFromDataframe(dataframe, selectedMethod = null) {
     /*
@@ -266,17 +373,10 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
     traces.push(lineTrace);
 
     // export plot as an image with a specified scale (higher DPI)
-    const config = {
-        toImageButtonOptions: {
-            format: 'png', // set image format (png, jpeg, svg, pdf)
-            height: 500,
-            width: 1200,
-            scale: 3,
-            filename: 'SRF_box_plot'
-        }
-    };
+    const config = buildPlotDownloadConfig('SRF_box_plot', layout.width, layout.height);
 
     Plotly.newPlot(container_id, traces, layout, config);
+    setFigureDownloadControlsVisible(true);
 }
 
 
@@ -431,17 +531,17 @@ function plot_pca(noDistribution, container_id = 'pca_plot') {
             };
 
             // export plot as an image with a specified scale (higher DPI)
-            const config = {
-                toImageButtonOptions: {
-                    format: 'png', // set image format (png, jpeg, svg, pdf)
-                    height: 700,
-                    width: 700,
-                    scale: 3,
-                    filename: 'SRF_pca_plot'
-                }
-            };
+            const config = buildPlotDownloadConfig('SRF_pca_plot', layout.width, layout.height);
 
             Plotly.newPlot(container_id, trace, layout, config);
+            setFigureDownloadControlsVisible(true);
         })
         .catch(error => console.error("Error loading JSON:", error));
 }
+
+
+ensureFigureDownloadControls();
+
+document.querySelector('.calculate-button')?.addEventListener('click', () => {
+    setFigureDownloadControlsVisible(false);
+});
