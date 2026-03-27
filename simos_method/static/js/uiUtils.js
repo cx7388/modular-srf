@@ -180,7 +180,7 @@ function buildOptionalConstraintsHtml() {
                     <label for="opt-minweight-value" style="min-width:9rem;">Minimum weight</label>
                     <input type="number" id="opt-minweight-value" class="labelmaxmin form-control"
                            step="0.1" min="0" max="100" value="0" oninput="enforceMinMaxLimits(event)">
-                    <span style="font-size:0.75rem; color:#6f7784;">for each criterion</span>
+                    <span style="font-size:0.75rem; color:#6f7784;">% for each criterion</span>
                 </div>
             </div>
         </div>
