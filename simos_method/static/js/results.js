@@ -373,7 +373,8 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
     traces.push(lineTrace);
 
     // export plot as an image with a specified scale (higher DPI)
-    const config = buildPlotDownloadConfig('SRF_box_plot', layout.width, layout.height);
+    const exportFilename = hasDistribution ? 'SRF_box_plot' : 'SRF_bar_chart';
+    const config = buildPlotDownloadConfig(exportFilename, layout.width, layout.height);
 
     Plotly.newPlot(container_id, traces, layout, config);
     setFigureDownloadControlsVisible(true);

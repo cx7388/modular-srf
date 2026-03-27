@@ -82,13 +82,8 @@ function ensureDynamicInputExists(inputId) {
 }
 
 
-/**
- * Applies imported form values to existing controls.
- */
-function applyConfigFormValues(formValues) {
-    if (!formValues || typeof formValues !== 'object') return;
-
-    Object.entries(formValues).forEach(([id, value]) => {
+function applyConfigFormEntries(entries) {
+    entries.forEach(([id, value]) => {
         ensureDynamicInputExists(id);
         const el = document.getElementById(id);
         if (!el) return;
@@ -98,6 +93,39 @@ function applyConfigFormValues(formValues) {
             el.value = value;
         }
     });
+}
+
+
+/**
+ * Applies imported form values to existing controls.
+ */
+function applyConfigFormValues(formValues) {
+    if (!formValues || typeof formValues !== 'object') return;
+
+    const entries = Object.entries(formValues);
+    const structuralIds = new Set([
+        'mod-q3-procedure',
+        'mod-q4-distance',
+        'mod-q5-distance-format',
+        'mod-q6-z',
+        'mod-q7-z-format',
+        'mod-q8-prob',
+        'mod-q11-output',
+        'mod-q12-unit',
+        'mod-q13-var-method'
+    ]);
+
+    const structuralEntries = entries.filter(([id]) => structuralIds.has(id));
+    const remainingEntries = entries.filter(([id]) => !structuralIds.has(id));
+
+    if (structuralEntries.length > 0) {
+        applyConfigFormEntries(structuralEntries);
+        if (typeof updateGridState === 'function') {
+            updateGridState();
+        }
+    }
+
+    applyConfigFormEntries(remainingEntries);
 
     if (typeof syncOptionalConstraintPanels === 'function') {
         syncOptionalConstraintPanels();
