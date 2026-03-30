@@ -1,7 +1,39 @@
-function exportToXLSX(filename = 'simos_method_results.xlsx') {
-    // create a new workbook with two worksheets containing normalized and non-normalized criteria weights
+async function exportToXLSX(filename = 'simos_method_results.xlsx') {
+    if (!Array.isArray(simos_calc_results) || simos_calc_results.length === 0) {
+        alert('Please run a calculation before exporting results.');
+        return;
+    }
+
+    // create a new workbook with the main criteria-weight worksheet
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(simos_calc_results), "Criteria Weights");
+
+    try {
+        const response = await fetch('/data/srf_export_payload.json', { cache: 'no-store' });
+        if (response.ok) {
+            const payload = await response.json();
+            const legacySections = Array.isArray(payload?.records)
+                ? [payload]
+                : [];
+            const namedSections = [
+                payload?.sampling_results,
+                payload?.extreme_scenarios
+            ].filter(section => section && typeof section === 'object');
+
+            [...namedSections, ...legacySections].forEach(section => {
+                const records = Array.isArray(section?.records) ? section.records : [];
+                if (records.length === 0) return;
+
+                const rawSheetName = typeof section?.sheet_name === 'string' && section.sheet_name.trim()
+                    ? section.sheet_name.trim()
+                    : 'Variability Details';
+                const sheetName = rawSheetName.slice(0, 31);
+                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(records), sheetName);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading export payload:', error);
+    }
 
     // generate an Excel file from the workbook and trigger download
     XLSX.writeFile(wb, filename);
@@ -19,8 +51,9 @@ function ensureFigureDownloadControls() {
         return controls;
     }
 
-    const boxplotContainer = document.getElementById('boxplot');
-    if (!boxplotContainer?.parentNode) {
+    const figureGrid = document.getElementById('results-figure-grid');
+    const figureGridParent = figureGrid?.parentNode;
+    if (!figureGrid || !figureGridParent) {
         return null;
     }
 
@@ -33,17 +66,17 @@ function ensureFigureDownloadControls() {
         alignItems: 'center',
         gap: '0.65rem',
         flexWrap: 'wrap',
-        margin: '1rem 0 0.75rem 0',
+        margin: '1rem 0 0.9rem 0',
         padding: '0.7rem 0.85rem',
         border: '1px solid #dbe1e9',
         borderRadius: '0.55rem',
         background: '#f8fafc',
-        width: 'fit-content'
+        width: '100%'
     });
 
     const label = document.createElement('label');
     label.htmlFor = FIGURE_DOWNLOAD_SELECT_ID;
-    label.textContent = 'Figure download';
+    label.textContent = 'Figure downloads';
     label.style.fontWeight = '600';
 
     const select = document.createElement('select');
@@ -59,14 +92,15 @@ function ensureFigureDownloadControls() {
     `;
 
     const hint = document.createElement('span');
-    hint.textContent = 'Applies to the download button in each plot toolbar. SVG is vector; raster exports use ~300 ppi scaling.';
+    hint.textContent = 'This format selection applies to the download button in every plot toolbar. SVG is vector; raster exports use ~300 ppi scaling.';
     Object.assign(hint.style, {
         fontSize: '0.82rem',
-        color: '#5a6372'
+        color: '#5a6372',
+        flex: '1 1 20rem'
     });
 
     controls.append(label, select, hint);
-    boxplotContainer.parentNode.insertBefore(controls, boxplotContainer);
+    figureGridParent.insertBefore(controls, figureGrid);
     return controls;
 }
 
@@ -102,6 +136,8 @@ function getFigureDownloadOptions(filename, fallbackWidth, fallbackHeight, plotE
 
 function buildPlotDownloadConfig(filename, fallbackWidth, fallbackHeight) {
     return {
+        responsive: true,
+        displaylogo: false,
         modeBarButtonsToRemove: ['toImage'],
         modeBarButtonsToAdd: [{
             name: 'Download figure',
@@ -198,6 +234,7 @@ function hasUsableBoxDistribution(distributionByCriterion) {
 
 
 async function plot_boxplot(simos_calc_results, noDistribution, container_id = 'boxplot') {
+    setFigureCardVisibility('boxplot-panel', true);
     let transposed;
     let hasDistribution = !noDistribution;
 
@@ -215,28 +252,29 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
                     hasDistribution = false;
                     transposed = {};
                 }
-                return;
             }
-            const data = await response.json();
-            if (!Array.isArray(data) || data.length === 0) {
-                const fallback = buildFallbackDistributionFromSummaryRows(simos_calc_results);
-                if (Object.keys(fallback).length > 0) {
-                    hasDistribution = true;
-                    transposed = fallback;
-                } else {
-                    hasDistribution = false;
-                    transposed = {};
-                }
-            } else {
-                const criteriaKeys = Object.keys(data[0]);
-                transposed = {};
-                for (const key of criteriaKeys) {
-                    transposed[key] = data.map(sample => sample[key]);
-                }
-                if (!hasUsableBoxDistribution(transposed)) {
+            else {
+                const data = await response.json();
+                if (!Array.isArray(data) || data.length === 0) {
                     const fallback = buildFallbackDistributionFromSummaryRows(simos_calc_results);
                     if (Object.keys(fallback).length > 0) {
+                        hasDistribution = true;
                         transposed = fallback;
+                    } else {
+                        hasDistribution = false;
+                        transposed = {};
+                    }
+                } else {
+                    const criteriaKeys = Object.keys(data[0]);
+                    transposed = {};
+                    for (const key of criteriaKeys) {
+                        transposed[key] = data.map(sample => sample[key]);
+                    }
+                    if (!hasUsableBoxDistribution(transposed)) {
+                        const fallback = buildFallbackDistributionFromSummaryRows(simos_calc_results);
+                        if (Object.keys(fallback).length > 0) {
+                            transposed = fallback;
+                        }
                     }
                 }
             }
@@ -252,6 +290,8 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
             }
         }
     }
+
+    updateBoxplotPanelCopy(hasDistribution);
 
     // create Plotly traces
     const traces = Object.keys(transposed).sort().map(key => ({
@@ -291,6 +331,7 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
         });
     }
 
+    const plotWidth = getPlotContainerWidth(container_id, 1200);
     const layout = {
         title: {
             text: 'Weights % by Criteria',
@@ -342,8 +383,7 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
             bgcolor: 'rgba(255,255,255,0.5)',
         },
         autosize: true,
-        height: 500,
-        width: 1200
+        height: plotWidth < 720 ? 430 : 500
     };
 
     // LINE CHART
@@ -374,16 +414,179 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
 
     // export plot as an image with a specified scale (higher DPI)
     const exportFilename = hasDistribution ? 'SRF_box_plot' : 'SRF_bar_chart';
-    const config = buildPlotDownloadConfig(exportFilename, layout.width, layout.height);
+    const config = buildPlotDownloadConfig(exportFilename, plotWidth, layout.height);
 
     Plotly.newPlot(container_id, traces, layout, config);
     setFigureDownloadControlsVisible(true);
 }
 
 
+function setFigureCardVisibility(cardId, isVisible) {
+    const card = document.getElementById(cardId);
+    if (card) {
+        card.style.display = isVisible ? '' : 'none';
+    }
+}
+
+
+function getPlotContainerWidth(container_id, fallbackWidth) {
+    const container = document.getElementById(container_id);
+    const measuredWidth = Number(container?.clientWidth) || fallbackWidth;
+    return Math.max(320, measuredWidth);
+}
+
+
+function resizeResultPlots() {
+    ['boxplot', 'extreme_plot', 'pca_plot'].forEach(plotId => {
+        const plotEl = document.getElementById(plotId);
+        if (plotEl && Array.isArray(plotEl.data) && plotEl.data.length > 0) {
+            Plotly.Plots.resize(plotEl);
+        }
+    });
+}
+
+
+window.addEventListener('resize', resizeResultPlots);
+
+
+function updateBoxplotPanelCopy(hasDistribution) {
+    const title = document.getElementById('boxplot-panel-title');
+    const description = document.getElementById('boxplot-panel-description');
+    const help = document.getElementById('boxplot-panel-help');
+
+    if (!title || !description || !help) return;
+
+    if (hasDistribution) {
+        title.textContent = 'Sampling Distribution';
+        description.textContent = 'Boxplots summarize the feasible sample cloud for each criterion. For continuous SRF models, the cloud is generated with a hit-and-run sampler targeting the uniform distribution over the admissible region, and the overlaid line shows the displayed SRF weight vector.';
+        help.textContent = 'The tool draws the requested number of feasible solutions from the admissible SRF region. For continuous models, it uses hit-and-run sampling targeting a uniform distribution over that region; if a run requires discrete logical constraints, it falls back to feasible-solution exploration. Each box aggregates the sampled weights for one criterion, while the line traces the weight vector returned in the results table.';
+        return;
+    }
+
+    title.textContent = 'Selected Weights';
+    description.textContent = 'When no variability analysis is available, the figure falls back to a simple bar chart of the displayed SRF weight vector.';
+    help.textContent = 'This chart is generated directly from the single SRF weight vector returned by the solver. No feasible sample cloud is used for this run, so the result is shown as bars instead of boxplots.';
+}
+
+
+async function plot_extreme_scenarios(noDistribution, container_id = 'extreme_plot') {
+    if (noDistribution) {
+        setFigureCardVisibility('extreme-panel', false);
+        Plotly.purge(container_id);
+        return;
+    }
+
+    try {
+        const response = await fetch('/data/srf_extreme_scenarios.json', { cache: 'no-store' });
+        const rows = response.ok ? await response.json() : [];
+        if (!Array.isArray(rows) || rows.length === 0) {
+            setFigureCardVisibility('extreme-panel', false);
+            Plotly.purge(container_id);
+            return;
+        }
+
+        const scenarioKey = Object.prototype.hasOwnProperty.call(rows[0], 'Scenario')
+            ? 'Scenario'
+            : null;
+        const criteria = Object.keys(rows[0]).filter(key => key !== scenarioKey);
+        if (!scenarioKey || criteria.length === 0) {
+            setFigureCardVisibility('extreme-panel', false);
+            Plotly.purge(container_id);
+            return;
+        }
+
+        setFigureCardVisibility('extreme-panel', true);
+        const scenarios = rows.map(row => row[scenarioKey]);
+        const zValues = rows.map(row => criteria.map(key => {
+            const value = Number.parseFloat(row[key]);
+            return Number.isFinite(value) ? value : null;
+        }));
+        const shouldAnnotateCells = scenarios.length <= 12 && criteria.length <= 10;
+        const textValues = shouldAnnotateCells
+            ? zValues.map(row => row.map(value => Number.isFinite(value) ? value.toFixed(1) : ''))
+            : undefined;
+
+        const trace = {
+            type: 'heatmap',
+            x: criteria,
+            y: scenarios,
+            z: zValues,
+            colorscale: 'Viridis',
+            text: textValues,
+            texttemplate: shouldAnnotateCells ? '%{text}' : undefined,
+            textfont: shouldAnnotateCells ? { color: '#ffffff', size: 11 } : undefined,
+            colorbar: {
+                title: {
+                    text: 'Weight %'
+                }
+            },
+            hovertemplate: 'Scenario: %{y}<br>Criterion: %{x}<br>Weight: %{z:.2f}%<extra></extra>'
+        };
+
+        const plotWidth = getPlotContainerWidth(container_id, 960);
+        const layout = {
+            title: {
+                text: 'Extreme scenario heatmap',
+                font: {
+                    weight: 'bold'
+                }
+            },
+            xaxis: {
+                title: {
+                    text: 'Criteria'
+                },
+                showgrid: false,
+                showline: true,
+                mirror: 'all',
+                linecolor: 'black',
+                linewidth: 1,
+                ticks: 'outside',
+                ticklen: 6,
+                tickwidth: 1,
+                tickcolor: 'black'
+            },
+            yaxis: {
+                title: {
+                    text: 'Extreme scenarios',
+                    standoff: plotWidth < 700 ? 18 : 28
+                },
+                autorange: 'reversed',
+                automargin: true,
+                showgrid: false,
+                showline: true,
+                mirror: 'all',
+                linecolor: 'black',
+                linewidth: 1,
+                ticks: 'outside',
+                ticklen: 6,
+                tickwidth: 1,
+                tickcolor: 'black'
+            },
+            autosize: true,
+            height: Math.max(380, 150 + scenarios.length * 28),
+            margin: {
+                l: plotWidth < 700 ? 185 : 275,
+                r: 70,
+                t: 70,
+                b: plotWidth < 700 ? 90 : 110
+            }
+        };
+
+        const config = buildPlotDownloadConfig('SRF_extreme_scenarios', plotWidth, layout.height);
+        Plotly.newPlot(container_id, [trace], layout, config);
+        setFigureDownloadControlsVisible(true);
+    } catch (error) {
+        console.error("Error loading extreme-scenario JSON:", error);
+        setFigureCardVisibility('extreme-panel', false);
+        Plotly.purge(container_id);
+    }
+}
+
+
 function plot_pca(noDistribution, container_id = 'pca_plot') {
     if (noDistribution) {
-        Plotly.purge('pca_plot');
+        setFigureCardVisibility('pca-panel', false);
+        Plotly.purge(container_id);
         return;
     }
 
@@ -392,6 +595,7 @@ function plot_pca(noDistribution, container_id = 'pca_plot') {
         .then(data => {
             const keys = Object.keys(data);
             if (keys.length === 0) {
+                setFigureCardVisibility('pca-panel', false);
                 Plotly.purge(container_id);
                 return;
             }
@@ -477,10 +681,13 @@ function plot_pca(noDistribution, container_id = 'pca_plot') {
             }
 
             if (trace.length === 0) {
+                setFigureCardVisibility('pca-panel', false);
                 Plotly.purge(container_id);
                 return;
             }
 
+            setFigureCardVisibility('pca-panel', true);
+            const plotWidth = getPlotContainerWidth(container_id, 700);
             const layout = {
                 title: {
                     text: 'PCA of sample weights',
@@ -527,17 +734,19 @@ function plot_pca(noDistribution, container_id = 'pca_plot') {
                     bgcolor: 'rgba(255,255,255,0.5)',
                 },
                 autosize: true,
-                height: 700,
-                width: 700
+                height: Math.max(380, Math.min(700, Math.round(plotWidth * 0.8)))
             };
 
             // export plot as an image with a specified scale (higher DPI)
-            const config = buildPlotDownloadConfig('SRF_pca_plot', layout.width, layout.height);
+            const config = buildPlotDownloadConfig('SRF_pca_plot', plotWidth, layout.height);
 
             Plotly.newPlot(container_id, trace, layout, config);
             setFigureDownloadControlsVisible(true);
         })
-        .catch(error => console.error("Error loading JSON:", error));
+        .catch(error => {
+            console.error("Error loading JSON:", error);
+            setFigureCardVisibility('pca-panel', false);
+        });
 }
 
 

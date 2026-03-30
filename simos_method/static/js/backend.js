@@ -1,4 +1,124 @@
 let simos_calc_results = {};
+let asi_value = null;
+let calculationProgressTimer = null;
+let calculationProgressRequestInFlight = false;
+
+
+function ensureCalculationProgressElements() {
+    const container = document.getElementById('loader-container');
+    if (!container) return null;
+
+    let panel = document.getElementById('calculation-progress-panel');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'calculation-progress-panel';
+        Object.assign(panel.style, {
+            position: 'absolute',
+            left: '0',
+            right: '0',
+            bottom: '0',
+            padding: '0 1rem 0.6rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.35rem',
+            alignItems: 'center',
+            pointerEvents: 'none'
+        });
+
+        const text = document.createElement('div');
+        text.id = 'calculation-progress-text';
+        Object.assign(text.style, {
+            fontSize: '0.88rem',
+            color: '#566170',
+            textAlign: 'center'
+        });
+
+        const bar = document.createElement('div');
+        bar.id = 'calculation-progress-bar';
+        Object.assign(bar.style, {
+            width: 'min(28rem, 92%)',
+            height: '0.45rem',
+            background: '#e3e8ef',
+            borderRadius: '999px',
+            overflow: 'hidden'
+        });
+
+        const fill = document.createElement('div');
+        fill.id = 'calculation-progress-fill';
+        Object.assign(fill.style, {
+            width: '0%',
+            height: '100%',
+            background: 'linear-gradient(90deg, #325d88 0%, #4f86b5 100%)',
+            borderRadius: '999px',
+            transition: 'width 180ms ease'
+        });
+
+        bar.appendChild(fill);
+        panel.append(text, bar);
+        container.appendChild(panel);
+    }
+
+    return panel;
+}
+
+
+function updateCalculationProgressDisplay(progress = {}) {
+    ensureCalculationProgressElements();
+    const container = document.getElementById('loader-container');
+    const text = document.getElementById('calculation-progress-text');
+    const fill = document.getElementById('calculation-progress-fill');
+    if (!container || !text || !fill) return;
+
+    container.style.height = '140px';
+    text.textContent = progress.message || 'Running SRF calculation...';
+
+    const numericPercent = Number(progress.percent);
+    if (Number.isFinite(numericPercent)) {
+        fill.style.width = `${Math.max(4, Math.min(100, numericPercent))}%`;
+        fill.style.opacity = '1';
+    } else {
+        fill.style.width = '18%';
+        fill.style.opacity = '0.65';
+    }
+}
+
+
+async function pollCalculationProgressOnce() {
+    if (calculationProgressRequestInFlight) return;
+    calculationProgressRequestInFlight = true;
+    try {
+        const response = await fetch('/data/calculation_progress.json', { cache: 'no-store' });
+        if (!response.ok) return;
+        const progress = await response.json();
+        updateCalculationProgressDisplay(progress);
+        if (progress?.done) {
+            stopCalculationProgressPolling();
+        }
+    } catch (error) {
+        console.error('Progress polling error:', error);
+    } finally {
+        calculationProgressRequestInFlight = false;
+    }
+}
+
+
+function startCalculationProgressPolling() {
+    stopCalculationProgressPolling();
+    updateCalculationProgressDisplay({
+        message: 'Preparing SRF calculation...',
+        percent: 0
+    });
+    calculationProgressTimer = window.setInterval(pollCalculationProgressOnce, 450);
+    pollCalculationProgressOnce();
+}
+
+
+function stopCalculationProgressPolling() {
+    if (calculationProgressTimer) {
+        window.clearInterval(calculationProgressTimer);
+        calculationProgressTimer = null;
+    }
+}
 
 
 // Belief-degree rows are rendered dynamically in the DOM. Read them back into a
@@ -118,6 +238,105 @@ function clearInconsistencyReport() {
 }
 
 
+function typesetMathInElement(element) {
+    if (!element || !window.MathJax || typeof window.MathJax.typesetPromise !== 'function') {
+        return;
+    }
+
+    try {
+        if (typeof window.MathJax.typesetClear === 'function') {
+            window.MathJax.typesetClear([element]);
+        }
+        window.MathJax.typesetPromise([element]).catch(error => {
+            console.error('MathJax typeset error:', error);
+        });
+    } catch (error) {
+        console.error('MathJax render error:', error);
+    }
+}
+
+
+function renderAsiValue(value, noDistribution) {
+    const container = document.getElementById("asi_value");
+    if (!container) return;
+
+    if (noDistribution) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const numericValue = Number.parseFloat(value);
+    const formattedValue = Number.isFinite(numericValue)
+        ? numericValue.toFixed(4)
+        : 'N/A';
+    const asiExplanationHtml = String.raw`
+        <div style="font-weight:600; margin-bottom:0.35rem;">Extreme-scenario ASI</div>
+        <div style="margin-bottom:0.5rem;">
+            The ASI is evaluated on the extreme-scenario matrix, i.e. the feasible solutions obtained by minimizing
+            and maximizing each criterion weight in turn.
+        </div>
+        <div style="margin-bottom:0.45rem;">
+            Let \(W = [w_{ij}] \in [0,100]^{m \times n}\), where \(w_{ij}\) is the weight of criterion \(j\)
+            in extreme scenario \(i\), expressed in percent. Here \(m\) is the number of extreme scenarios and
+            \(n\) is the number of criteria.
+        </div>
+        <div class="asi-math-block">
+            \[
+            \mathrm{ASI}(W)
+            =
+            1
+            -
+            \frac{1}{n}
+            \sum_{j=1}^{n}
+            \frac{
+                \sqrt{
+                    m \sum_{i=1}^{m} w_{ij}^{2}
+                    -
+                    \left(\sum_{i=1}^{m} w_{ij}\right)^{2}
+                }
+            }{
+                100\left(\frac{m}{n}\right)\sqrt{n-1}
+            }
+            \]
+        </div>
+        <div style="margin-bottom:0.4rem;">
+            Equivalently, if
+            \( s_j = \sqrt{m \sum_{i=1}^{m} w_{ij}^{2} - \left(\sum_{i=1}^{m} w_{ij}\right)^{2}} \),
+            then:
+        </div>
+        <div class="asi-math-block">
+            \[
+            \mathrm{ASI}(W)
+            =
+            1
+            -
+            \frac{1}{n}
+            \sum_{j=1}^{n}
+            \frac{s_j}{100(m/n)\sqrt{n-1}}
+            \]
+        </div>
+        <div>
+            Larger ASI values indicate lower dispersion of criterion weights across the extreme feasible cases,
+            hence greater stability.
+        </div>
+    `;
+
+    container.innerHTML = `
+        <div class="asi-value-pill">
+            <span class="asi-value-label">Average Stability Index (ASI)</span>
+            <strong class="asi-value-number">${formattedValue}</strong>
+            <span class="info-popover asi-info-popover">
+                <button type="button" class="info-popover-trigger" aria-label="Explain the Average Stability Index">What is this?</button>
+                <span class="info-popover-content">
+                    ${asiExplanationHtml}
+                </span>
+            </span>
+        </div>
+    `;
+    typesetMathInElement(container);
+}
+
+
 function renderInconsistencyReport(report) {
     const container = document.getElementById('results-container');
     if (!container) return;
@@ -176,7 +395,13 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
     document.querySelectorAll('#results-container table').forEach(table => table.remove());
     clearInconsistencyReport();
     Plotly.purge('boxplot');
+    Plotly.purge('extreme_plot');
     Plotly.purge('pca_plot');
+    if (typeof setFigureCardVisibility === 'function') {
+        setFigureCardVisibility('boxplot-panel', false);
+        setFigureCardVisibility('extreme-panel', false);
+        setFigureCardVisibility('pca-panel', false);
+    }
 
     // Declare variables for user inputs (arrangement of cards, z value, and required precision)
     const dropZone = document.querySelector('.drop-zone');
@@ -199,6 +424,9 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
     const selectedMethod = document.getElementById("srf_method").value;
     const modularOptions = selectedMethod === 'modular_srf' && typeof collectModularOptionsFromDom === 'function'
         ? collectModularOptionsFromDom()
+        : null;
+    const samplingSize = typeof collectSamplingSizeFromDom === 'function'
+        ? collectSamplingSizeFromDom()
         : null;
     // The dropdown value stays "modular_srf", but the payload also includes the
     // derived classical profile so both frontend and backend agree on input shape.
@@ -506,6 +734,7 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
         // Start spinner
         target.style.display = 'block';
         spinner.spin(target);
+        startCalculationProgressPolling();
 
         fetch('/calculate', {
             method: 'POST',
@@ -518,6 +747,7 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
                 srf_method,
                 optionalConstraints,
                 inconsistencySuggestions,
+                samplingSize,
                 modularOptions,
                 // The server still re-resolves modularOptions; this profile is a
                 // parsing hint that keeps import/export flows straightforward.
@@ -535,6 +765,7 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
             .then(data => {
                 if (data?.inconsistency?.detected) {
                     renderInconsistencyReport(data.inconsistency);
+                    stopCalculationProgressPolling();
                     spinner.stop();
                     target.style.display = 'none';
                     return;
@@ -562,16 +793,14 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
                 const tableMethod = selectedMethod === 'modular_srf'
                     ? (noDistribution ? 'srf' : 'robust_srf')
                     : selectedMethod;
-                const skipPca = selectedMethod === 'modular_srf'
-                    && (modularOptions?.output_type || 'single') === 'variability'
-                    && (modularOptions?.variability_method || 'sampling') === 'extreme';
-                document.getElementById("asi_value").textContent =
-                    noDistribution ? '' : 'Average Stability Index (ASI) = ' + asi_value;
+                renderAsiValue(asi_value, noDistribution);
                 createTableFromDataframe(simos_calc_results, tableMethod);
                 plot_boxplot(simos_calc_results, noDistribution, container_id = 'boxplot');
-                plot_pca(noDistribution || skipPca, container_id = 'pca_plot')
+                plot_extreme_scenarios(noDistribution, container_id = 'extreme_plot');
+                plot_pca(noDistribution, container_id = 'pca_plot')
 
                 // Stop spinner
+                stopCalculationProgressPolling();
                 spinner.stop();
                 target.style.display = 'none';
             })
@@ -580,6 +809,7 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
                 alert(error.message || 'Calculation failed. Please review your inputs and try again.');
 
                 // stop spinner
+                stopCalculationProgressPolling();
                 spinner.stop();
                 target.style.display = 'none';
             });

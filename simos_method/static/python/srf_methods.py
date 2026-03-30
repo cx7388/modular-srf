@@ -33,10 +33,15 @@ HFL_Z_MIN_TERM = 1
 HFL_Z_MAX_TERM = 10
 DATA_DIR = Path(__file__).resolve().parents[1] / 'data'
 SRF_SAMPLES_PATH = DATA_DIR / 'srf_samples.json'
+SRF_EXTREME_SCENARIOS_PATH = DATA_DIR / 'srf_extreme_scenarios.json'
+CALCULATION_PROGRESS_PATH = DATA_DIR / 'calculation_progress.json'
+EXPORT_PAYLOAD_PATH = DATA_DIR / 'srf_export_payload.json'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 INCONSISTENCY_BIG_M = 10_000.0
 INCONSISTENCY_CARDINALITY_WEIGHT = 1_000_000_000.0
 INCONSISTENCY_RESTORATION_BETA = 1.0
+MAX_USER_SAMPLE_SIZE = 20_000
+DEFAULT_SAMPLING_SIZE = 200
 MODULAR_ALLOWED_PROFILES = {
     'srf',
     'srf_ii',
@@ -56,6 +61,247 @@ MODULAR_DEFAULT_OPTIONS = {
     'unit_weight': 'fixed',
     'variability_method': 'sampling',
 }
+
+
+def _write_json_payload(path_obj, payload, default_payload='{}'):
+    """
+    Writes JSON payloads atomically so the frontend can safely poll while a
+    long calculation is still updating status files.
+    """
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path_obj.with_suffix(f'{path_obj.suffix}.tmp')
+    try:
+        temp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(',', ':')),
+            encoding='utf-8'
+        )
+        temp_path.replace(path_obj)
+    except Exception:
+        path_obj.write_text(default_payload, encoding='utf-8')
+
+
+def reset_calculation_progress(message='Preparing calculation...'):
+    """
+    Initializes the progress payload consumed by the frontend polling loop.
+    """
+    update_calculation_progress(
+        stage='preparing',
+        message=message,
+        current=0,
+        total=1,
+        active=True,
+        done=False,
+        status='running'
+    )
+
+
+def update_calculation_progress(stage,
+                                message,
+                                current=None,
+                                total=None,
+                                active=True,
+                                done=False,
+                                status='running'):
+    """
+    Persists coarse-grained calculation progress for the active run.
+    """
+    percent = None
+    if isinstance(current, (int, float)) and isinstance(total, (int, float)) and float(total) > 0:
+        percent = max(0.0, min(100.0, round((float(current) / float(total)) * 100.0, 1)))
+
+    payload = {
+        'active': bool(active),
+        'done': bool(done),
+        'status': str(status),
+        'stage': str(stage),
+        'message': str(message),
+        'current': None if current is None else float(current),
+        'total': None if total is None else float(total),
+        'percent': percent,
+    }
+    _write_json_payload(
+        CALCULATION_PROGRESS_PATH,
+        payload,
+        default_payload='{"active":false,"done":false,"status":"idle","stage":"idle","message":"Idle","current":0,"total":0,"percent":0}'
+    )
+
+
+def finish_calculation_progress(message='Calculation complete.', status='completed'):
+    """
+    Marks the current calculation as finished.
+    """
+    update_calculation_progress(
+        stage='finished',
+        message=message,
+        current=1,
+        total=1,
+        active=False,
+        done=True,
+        status=status
+    )
+
+
+def clear_variability_export_payload():
+    """
+    Resets the variability export payload so stale results are not downloaded.
+    """
+    EXPORT_PAYLOAD_PATH.write_text("{}", encoding='utf-8')
+
+
+def clear_distribution_samples():
+    """
+    Resets the saved sampling cloud used by the variability figures.
+    """
+    SRF_SAMPLES_PATH.write_text("[]", encoding='utf-8')
+
+
+def clear_extreme_scenarios():
+    """
+    Resets the saved extreme-scenario table used by the dedicated figure/export.
+    """
+    SRF_EXTREME_SCENARIOS_PATH.write_text("[]", encoding='utf-8')
+
+
+def _coerce_sample_size(raw_value):
+    """
+    Parses an optional user-provided sample count.
+    """
+    try:
+        parsed_value = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+    if parsed_value <= 0:
+        return None
+
+    return min(parsed_value, MAX_USER_SAMPLE_SIZE)
+
+
+def _should_emit_progress(current, total, target_updates=24):
+    """
+    Throttles status-file writes so progress remains responsive without
+    overwhelming the filesystem.
+    """
+    if not isinstance(current, (int, float)) or not isinstance(total, (int, float)) or total <= 0:
+        return True
+    interval = max(1, int(total) // max(1, target_updates))
+    return int(current) in {0, 1, int(total)} or (int(current) % interval == 0)
+
+
+def _rename_solution_columns(cards_arrangement, values_df):
+    """
+    Renames criterion-id columns to user-facing criterion names when possible.
+    """
+    export_df = values_df.copy()
+    try:
+        export_df = export_df.rename(columns=cards_arrangement['name'])
+    except Exception:
+        pass
+    return export_df
+
+
+def _format_sampling_export_rows(export_df):
+    labeled_df = export_df.copy().reset_index(drop=True)
+    labeled_df.insert(0, 'Sample', [f'Sample {idx + 1}' for idx in range(len(labeled_df))])
+    return labeled_df
+
+
+def _format_extreme_export_rows(export_df):
+    scenario_labels = []
+    for idx, raw_label in enumerate(export_df.index, start=1):
+        label = str(raw_label).strip()
+        if label.startswith('vertex_'):
+            suffix = label.split('_')[-1]
+            if suffix.isdigit():
+                label = f'Vertex {int(suffix) + 1}'
+        if not label:
+            label = f'Scenario {idx}'
+        scenario_labels.append(label)
+
+    labeled_df = export_df.copy().reset_index(drop=True)
+    labeled_df.insert(0, 'Scenario', scenario_labels)
+    return labeled_df
+
+
+def _build_variability_export_section(cards_arrangement, values_df, mode, source):
+    """
+    Builds one labeled XLSX-export section for variability details.
+    """
+    if not (isinstance(values_df, pd.DataFrame) and not values_df.empty):
+        return None
+
+    renamed_df = _rename_solution_columns(cards_arrangement, values_df)
+    if mode == 'extreme':
+        labeled_df = _format_extreme_export_rows(renamed_df)
+        sheet_name = 'Extreme Scenarios'
+    else:
+        labeled_df = _format_sampling_export_rows(renamed_df)
+        sheet_name = 'Sampling Results'
+
+    return {
+        'mode': mode,
+        'source': source,
+        'sheet_name': sheet_name,
+        'records': labeled_df.to_dict(orient='records'),
+    }
+
+
+def _persist_variability_export_payload(cards_arrangement,
+                                        sampling_df=None,
+                                        extreme_df=None,
+                                        sampling_source='samples',
+                                        extreme_source='min_max'):
+    """
+    Persists both variability detail tables used by XLSX export.
+    """
+    payload = {}
+
+    sampling_section = _build_variability_export_section(
+        cards_arrangement,
+        sampling_df,
+        mode='sampling',
+        source=sampling_source
+    )
+    if sampling_section is not None:
+        payload['sampling_results'] = sampling_section
+
+    extreme_section = _build_variability_export_section(
+        cards_arrangement,
+        extreme_df,
+        mode='extreme',
+        source=extreme_source
+    )
+    if extreme_section is not None:
+        payload['extreme_scenarios'] = extreme_section
+
+    if not payload:
+        clear_variability_export_payload()
+        return
+
+    _write_json_payload(
+        EXPORT_PAYLOAD_PATH,
+        payload
+    )
+
+
+def _persist_extreme_scenarios(cards_arrangement, values_df):
+    """
+    Persists labeled extreme scenarios for the dedicated frontend figure.
+    """
+    if not (isinstance(values_df, pd.DataFrame) and not values_df.empty):
+        clear_extreme_scenarios()
+        return
+
+    renamed_df = _rename_solution_columns(cards_arrangement, values_df)
+    labeled_df = _format_extreme_export_rows(renamed_df)
+    labeled_df.to_json(str(SRF_EXTREME_SCENARIOS_PATH), orient='records')
+
+
+def _resolve_sample_budget(raw_sample_size):
+    """
+    Returns the requested sample count or the application default.
+    """
+    return raw_sample_size if isinstance(raw_sample_size, int) else DEFAULT_SAMPLING_SIZE
 
 
 def _normalize_modular_options(modular_options):
@@ -119,7 +365,10 @@ def _normalize_modular_options(modular_options):
         normalized['distance_format'] = 'interval'
     if normalized['z_type'] != 'imprecise':
         normalized['z_format'] = 'interval'
-    if normalized['output_type'] != 'variability':
+    if normalized['output_type'] == 'variability':
+        # Dynamic analysis now always produces both sample clouds and extreme scenarios.
+        normalized['variability_method'] = 'sampling'
+    else:
         normalized['variability_method'] = 'sampling'
 
     return normalized
@@ -742,55 +991,60 @@ def _resolve_method_structure(srf_method):
     """
     Returns SRF modular components for a selected method.
     """
-    match srf_method:
-        case 'srf' | 'srf_ii' | 'belief_degree_imprecise_srf' | 'hfl_srf':
-            srf_objective = None
-        case 'robust_srf' | 'wap' | 'imprecise_srf':
-            srf_objective = 'Maximize ASI'
-        case _:
-            raise ValueError('Invalid SRF method')
+    srf_objective_map = {
+        'srf': None,
+        'srf_ii': None,
+        'belief_degree_imprecise_srf': None,
+        'hfl_srf': None,
+        'robust_srf': 'Maximize ASI',
+        'wap': 'Maximize ASI',
+        'imprecise_srf': 'Maximize ASI',
+    }
+    comp_rule_within_map = {
+        'srf': 'equal',
+        'srf_ii': 'equal',
+        'robust_srf': 'equal',
+        'wap': 'equal',
+        'imprecise_srf': 'equal',
+        'belief_degree_imprecise_srf': 'equal',
+        'hfl_srf': 'equal',
+    }
+    comp_rule_successive_map = {
+        'srf': 'fixed-spacing',
+        'srf_ii': 'fixed-spacing',
+        'hfl_srf': 'hfl-linguistic-interval',
+        'robust_srf': 'fully-flexible',
+        'wap': 'fully-flexible',
+        'imprecise_srf': 'interval-constrained',
+        'belief_degree_imprecise_srf': 'probability-distribution',
+    }
+    ratio_mode_map = {
+        'srf': 'exact-ratio',
+        'robust_srf': 'exact-ratio',
+        'hfl_srf': 'hfl-ratio-interval',
+        'srf_ii': 'linear-spacing',
+        'wap': 'interval-successive',
+        'imprecise_srf': 'interval-total',
+        'belief_degree_imprecise_srf': 'probability-cloud',
+    }
+    normalized_map = {
+        'srf': True,
+        'srf_ii': True,
+        'robust_srf': True,
+        'wap': True,
+        'imprecise_srf': True,
+        'belief_degree_imprecise_srf': True,
+        'hfl_srf': True,
+    }
 
-    match srf_method:
-        case 'srf' | 'srf_ii' | 'robust_srf' | 'wap' | 'imprecise_srf' | 'belief_degree_imprecise_srf' | 'hfl_srf':
-            comp_rule_within = 'equal'
-        case _:
-            raise ValueError('Invalid SRF method')
+    if srf_method not in srf_objective_map:
+        raise ValueError('Invalid SRF method')
 
-    match srf_method:
-        case 'srf' | 'srf_ii':
-            comp_rule_successive = 'fixed-spacing'
-        case 'hfl_srf':
-            comp_rule_successive = 'hfl-linguistic-interval'
-        case 'robust_srf' | 'wap':
-            comp_rule_successive = 'fully-flexible'
-        case 'imprecise_srf':
-            comp_rule_successive = 'interval-constrained'
-        case 'belief_degree_imprecise_srf':
-            comp_rule_successive = 'probability-distribution'
-        case _:
-            raise ValueError('Invalid SRF method')
-
-    match srf_method:
-        case 'srf' | 'robust_srf':
-            ratio_mode = 'exact-ratio'
-        case 'hfl_srf':
-            ratio_mode = 'hfl-ratio-interval'
-        case 'srf_ii':
-            ratio_mode = 'linear-spacing'
-        case 'wap':
-            ratio_mode = 'interval-successive'
-        case 'imprecise_srf':
-            ratio_mode = 'interval-total'
-        case 'belief_degree_imprecise_srf':
-            ratio_mode = 'probability-cloud'
-        case _:
-            raise ValueError('Invalid SRF method')
-
-    match srf_method:
-        case 'srf' | 'srf_ii' | 'robust_srf' | 'wap' | 'imprecise_srf' | 'belief_degree_imprecise_srf' | 'hfl_srf':
-            normalized = True
-        case _:
-            raise ValueError('Invalid SRF method')
+    srf_objective = srf_objective_map[srf_method]
+    comp_rule_within = comp_rule_within_map[srf_method]
+    comp_rule_successive = comp_rule_successive_map[srf_method]
+    ratio_mode = ratio_mode_map[srf_method]
+    normalized = normalized_map[srf_method]
 
     return srf_objective, comp_rule_within, comp_rule_successive, ratio_mode, normalized
 
@@ -881,12 +1135,7 @@ def _persist_distribution_samples(cards_arrangement, samples_df):
     if not (isinstance(samples_df, pd.DataFrame) and not samples_df.empty):
         return
 
-    export_df = samples_df.copy()
-    try:
-        export_df = export_df.rename(columns=cards_arrangement['name'])
-    except Exception:
-        pass
-
+    export_df = _rename_solution_columns(cards_arrangement, samples_df)
     export_df.to_json(str(SRF_SAMPLES_PATH), orient='records')
 
 
@@ -894,7 +1143,8 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                   modular_options=None,
                   modular_profile=None,
                   min_delta=1.0,
-                  extra_constraints=None):
+                  extra_constraints=None,
+                  sample_size=None):
     """
     Calculates criteria weights using the specified SRF variant.
 
@@ -908,6 +1158,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
         modular_profile (str, optional): Effective profile mapped from modular answers.
         min_delta (float, optional): Minimum delta for random sampling. Defaults to 1.0.
         extra_constraints (dict, optional): Optional anti-dictatorship/minimum-weight requirements.
+        sample_size (int, optional): User-requested sample count for sampling-based routines.
 
     Returns:
         tuple:
@@ -916,6 +1167,16 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
     """
     n_crit_cards = cards_arrangement['class'].to_list().count('criterion')
     is_modular = srf_method == 'modular_srf'
+    requested_sampling_size = _coerce_sample_size(sample_size)
+
+    update_calculation_progress(
+        stage='setup',
+        message='Preparing SRF calculation...',
+        current=0,
+        total=1,
+        active=True,
+        done=False
+    )
 
     if is_modular:
         # Modular SRF first resolves questionnaire answers into structural choices,
@@ -941,26 +1202,16 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
     modular_output_variability = bool(
         is_modular and resolved_modular_options.get('output_type') == 'variability'
     )
-    modular_variability_method = (
-        resolved_modular_options.get('variability_method', 'sampling')
-        if is_modular else 'sampling'
-    )
-    if modular_variability_method not in {'sampling', 'extreme'}:
-        modular_variability_method = 'sampling'
-    modular_sampling_size = None
+    modular_sampling_size = requested_sampling_size
     if is_modular:
         raw_modular_options = modular_options if isinstance(modular_options, dict) else {}
-        raw_sampling_size = (
-            raw_modular_options.get('sampling_size')
-            if 'sampling_size' in raw_modular_options
-            else raw_modular_options.get('sample_size')
-        )
-        try:
-            parsed_sampling_size = int(raw_sampling_size)
-            if parsed_sampling_size > 0:
-                modular_sampling_size = min(parsed_sampling_size, 20000)
-        except (TypeError, ValueError):
-            modular_sampling_size = None
+        if modular_sampling_size is None:
+            raw_sampling_size = (
+                raw_modular_options.get('sampling_size')
+                if 'sampling_size' in raw_modular_options
+                else raw_modular_options.get('sample_size')
+            )
+            modular_sampling_size = _coerce_sample_size(raw_sampling_size)
     modular_dynamic_unit = bool(
         is_modular and resolved_modular_options.get('unit_weight') == 'dynamic'
     )
@@ -999,11 +1250,6 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             'probability-distribution',
             'hfl-linguistic-interval',
         }
-        and not (
-            resolved_modular_options.get('procedure') == 'zero'
-            and modular_dynamic_unit
-            and modular_variability_method == 'sampling'
-        )
     )
 
     # Dynamic unit weight (Q12b) is modeled through fully-flexible successive constraints.
@@ -1014,13 +1260,29 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
     [O6] Extra Constraints
     """
     # Additional constraints are introduced here.
-    match srf_method:
-        case 'srf' | 'srf_ii' | 'robust_srf' | 'wap' | 'imprecise_srf' | 'belief_degree_imprecise_srf' | 'hfl_srf' | 'modular_srf':
-            extra_cond = extra_constraints if isinstance(extra_constraints, dict) else None
-        case _:
-            raise ValueError('Invalid SRF method')
+    valid_methods = {
+        'srf',
+        'srf_ii',
+        'robust_srf',
+        'wap',
+        'imprecise_srf',
+        'belief_degree_imprecise_srf',
+        'hfl_srf',
+        'modular_srf',
+    }
+    if srf_method not in valid_methods:
+        raise ValueError('Invalid SRF method')
+    extra_cond = extra_constraints if isinstance(extra_constraints, dict) else None
 
     if _is_extra_constraints_enabled(extra_cond):
+        update_calculation_progress(
+            stage='validation',
+            message='Checking feasibility of the selected constraints...',
+            current=0,
+            total=1,
+            active=True,
+            done=False
+        )
         _check_model_feasibility(cards_arrangement,
                                  z_value,
                                  e_value,
@@ -1054,7 +1316,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             ratio_mode=ratio_mode,
             normalized=normalized,
             extra_cond=extra_cond,
-            sample_size_hint=modular_sampling_size if is_modular else None
+            sample_size_hint=_resolve_sample_budget(modular_sampling_size if is_modular else requested_sampling_size)
         )
         random.seed(seed_value)
         np.random.seed(seed_value)
@@ -1096,6 +1358,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                                conditional_gap_milp=conditional_gap_milp,
                                                                dynamic_unit_weight=modular_dynamic_unit)
 
+            sample_budget = _resolve_sample_budget(modular_sampling_size)
             srf_samples, asi_srf_samples = calc_srf_rand_samples(cards_arrangement,
                                                                  z_value,
                                                                  e_value,
@@ -1105,7 +1368,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                                  normalized=normalized,
                                                                  extra_cond=extra_cond,
                                                                  min_delta=min_delta,
-                                                                 n_samples=50 * n_crit_cards,
+                                                                 n_samples=sample_budget,
                                                                  conditional_gap_milp=conditional_gap_milp,
                                                                  dynamic_unit_weight=modular_dynamic_unit)
 
@@ -1119,7 +1382,18 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             # samples to compute a representative center solution.
             needs_distribution = modular_output_variability or modular_center_single_required
             if needs_distribution:
-                if modular_output_variability and modular_variability_method == 'extreme':
+                probabilistic_or_hfl = (
+                    comp_rule_successive in ['probability-distribution', 'hfl-linguistic-interval']
+                    or ratio_mode in ['probability-cloud', 'hfl-ratio-interval']
+                )
+                sample_budget = _resolve_sample_budget(modular_sampling_size)
+                vertex_budget = (
+                    min(max(5 * n_crit_cards, 20), 120)
+                    if probabilistic_or_hfl
+                    else max(10 * n_crit_cards, 40)
+                )
+
+                if modular_output_variability:
                     srf_min_max, _ = calc_srf_min_max(cards_arrangement,
                                                       z_value,
                                                       e_value,
@@ -1131,6 +1405,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                       min_delta=min_delta,
                                                       conditional_gap_milp=conditional_gap_milp,
                                                       dynamic_unit_weight=modular_dynamic_unit)
+
                     srf_vertices, _ = calc_srf_vertices(cards_arrangement,
                                                         z_value,
                                                         e_value,
@@ -1140,60 +1415,29 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                         normalized=normalized,
                                                         extra_cond=extra_cond,
                                                         min_delta=min_delta,
-                                                        n_samples=max(12 * n_crit_cards, 40),
+                                                        n_samples=vertex_budget,
                                                         conditional_gap_milp=conditional_gap_milp,
                                                         dynamic_unit_weight=modular_dynamic_unit)
-                    if isinstance(srf_vertices, pd.DataFrame) and not srf_vertices.empty:
-                        srf_samples = srf_vertices.copy()
-                    elif isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
-                        srf_samples = srf_min_max.copy()
-                else:
-                    probabilistic_or_hfl = (
-                        comp_rule_successive in ['probability-distribution', 'hfl-linguistic-interval']
-                        or ratio_mode in ['probability-cloud', 'hfl-ratio-interval']
-                    )
-                    if probabilistic_or_hfl:
-                        sample_budget = min(max(12 * n_crit_cards, 80), 300)
-                        vertex_budget = min(max(5 * n_crit_cards, 20), 120)
-                    else:
-                        sample_budget = max(25 * n_crit_cards, 120) if modular_output_variability else max(15 * n_crit_cards, 80)
-                        vertex_budget = max(10 * n_crit_cards, 40)
 
-                    if modular_output_variability and isinstance(modular_sampling_size, int):
-                        sample_budget = modular_sampling_size
+                srf_samples, _ = calc_srf_rand_samples(cards_arrangement,
+                                                       z_value,
+                                                       e_value,
+                                                       comp_rule_within=comp_rule_within,
+                                                       comp_rule_successive=comp_rule_successive,
+                                                       ratio_mode=ratio_mode,
+                                                       normalized=normalized,
+                                                       extra_cond=extra_cond,
+                                                       min_delta=min_delta,
+                                                       n_samples=sample_budget,
+                                                       conditional_gap_milp=conditional_gap_milp,
+                                                       dynamic_unit_weight=modular_dynamic_unit)
 
-                    if modular_output_variability:
-                        srf_vertices, _ = calc_srf_vertices(cards_arrangement,
-                                                            z_value,
-                                                            e_value,
-                                                            comp_rule_within=comp_rule_within,
-                                                            comp_rule_successive=comp_rule_successive,
-                                                            ratio_mode=ratio_mode,
-                                                            normalized=normalized,
-                                                            extra_cond=extra_cond,
-                                                            min_delta=min_delta,
-                                                            n_samples=vertex_budget,
-                                                            conditional_gap_milp=conditional_gap_milp,
-                                                            dynamic_unit_weight=modular_dynamic_unit)
+                if isinstance(srf_samples, pd.DataFrame) and srf_samples.empty and isinstance(srf_vertices, pd.DataFrame):
+                    srf_samples = srf_vertices.copy()
 
-                    srf_samples, _ = calc_srf_rand_samples(cards_arrangement,
-                                                           z_value,
-                                                           e_value,
-                                                           comp_rule_within=comp_rule_within,
-                                                           comp_rule_successive=comp_rule_successive,
-                                                           ratio_mode=ratio_mode,
-                                                           normalized=normalized,
-                                                           extra_cond=extra_cond,
-                                                           min_delta=min_delta,
-                                                           n_samples=sample_budget,
-                                                           conditional_gap_milp=conditional_gap_milp,
-                                                           dynamic_unit_weight=modular_dynamic_unit)
-
-                    if isinstance(srf_samples, pd.DataFrame) and srf_samples.empty and isinstance(srf_vertices, pd.DataFrame):
-                        srf_samples = srf_vertices.copy()
-
-                    if (modular_center_single_required
-                            and (not isinstance(srf_samples, pd.DataFrame) or srf_samples.empty)):
+                if (modular_center_single_required
+                        and (not isinstance(srf_samples, pd.DataFrame) or srf_samples.empty)):
+                    if not (isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty):
                         srf_min_max, _ = calc_srf_min_max(cards_arrangement,
                                                           z_value,
                                                           e_value,
@@ -1205,62 +1449,20 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                           min_delta=min_delta,
                                                           conditional_gap_milp=conditional_gap_milp,
                                                           dynamic_unit_weight=modular_dynamic_unit)
-                        if isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
-                            srf_samples = srf_min_max.copy()
-
-                # Sampling can under-cover broad feasible regions in modular imprecise runs.
-                # Compute exact min/max envelopes once so reported bounds reflect the true space.
-                if (modular_output_variability
-                        and modular_variability_method == 'sampling'
-                        and resolved_modular_options.get('distance_type') == 'imprecise'
-                        and comp_rule_successive in {'interval-constrained', 'probability-distribution', 'hfl-linguistic-interval'}
-                        and not (isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty)):
-                    srf_min_max, _ = calc_srf_min_max(cards_arrangement,
-                                                      z_value,
-                                                      e_value,
-                                                      comp_rule_within=comp_rule_within,
-                                                      comp_rule_successive=comp_rule_successive,
-                                                      ratio_mode=ratio_mode,
-                                                      normalized=normalized,
-                                                      extra_cond=extra_cond,
-                                                      min_delta=min_delta,
-                                                      conditional_gap_milp=conditional_gap_milp,
-                                                      dynamic_unit_weight=modular_dynamic_unit)
+                    if isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
+                        srf_samples = srf_min_max.copy()
     else:
         if comp_rule_successive in ['fixed-spacing']:
             pass
-        elif srf_method in ['belief_degree_imprecise_srf', 'hfl_srf']:
-            # For belief-degree and HFL variants, generate distributions for ASI/PCA
-            # with bounded budgets to keep response time practical.
-            vertex_budget = min(max(5 * n_crit_cards, 20), 120)
-            sample_budget = min(max(12 * n_crit_cards, 80), 300)
-
-            srf_vertices, _ = calc_srf_vertices(cards_arrangement,
-                                                z_value,
-                                                e_value,
-                                                comp_rule_within=comp_rule_within,
-                                                comp_rule_successive=comp_rule_successive,
-                                                ratio_mode=ratio_mode,
-                                                normalized=normalized,
-                                                extra_cond=extra_cond,
-                                                min_delta=min_delta,
-                                                n_samples=vertex_budget,
-                                                conditional_gap_milp=conditional_gap_milp,
-                                                dynamic_unit_weight=modular_dynamic_unit)
-
-            srf_samples, _ = calc_srf_rand_samples(cards_arrangement,
-                                                   z_value,
-                                                   e_value,
-                                                   comp_rule_within=comp_rule_within,
-                                                   comp_rule_successive=comp_rule_successive,
-                                                   ratio_mode=ratio_mode,
-                                                   normalized=normalized,
-                                                   extra_cond=extra_cond,
-                                                   min_delta=min_delta,
-                                                   n_samples=sample_budget,
-                                                   conditional_gap_milp=conditional_gap_milp,
-                                                   dynamic_unit_weight=modular_dynamic_unit)
         else:
+            probabilistic_or_hfl = srf_method in ['belief_degree_imprecise_srf', 'hfl_srf']
+            vertex_budget = (
+                min(max(5 * n_crit_cards, 20), 120)
+                if probabilistic_or_hfl
+                else 20 * n_crit_cards
+            )
+            sample_budget = _resolve_sample_budget(requested_sampling_size)
+
             # Compute the variation range of the weight of each separate criterion (Max-Min approach)
             srf_min_max, asi_srf_min_max = calc_srf_min_max(cards_arrangement,
                                                             z_value,
@@ -1284,7 +1486,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                                normalized=normalized,
                                                                extra_cond=extra_cond,
                                                                min_delta=min_delta,
-                                                               n_samples=20 * n_crit_cards,
+                                                               n_samples=vertex_budget,
                                                                conditional_gap_milp=conditional_gap_milp,
                                                                dynamic_unit_weight=modular_dynamic_unit)
 
@@ -1298,9 +1500,12 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                                  normalized=normalized,
                                                                  extra_cond=extra_cond,
                                                                  min_delta=min_delta,
-                                                                 n_samples=50 * n_crit_cards,
+                                                                 n_samples=sample_budget,
                                                                  conditional_gap_milp=conditional_gap_milp,
                                                                  dynamic_unit_weight=modular_dynamic_unit)
+
+            if isinstance(srf_samples, pd.DataFrame) and srf_samples.empty and isinstance(srf_vertices, pd.DataFrame):
+                srf_samples = srf_vertices.copy()
 
             # Store ASI values and barycenters of each robustness rule.
             robustness_rules = {
@@ -1429,17 +1634,44 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             srf_min_max=srf_min_max,
             decimals=summary_decimals
         )
+        if isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
+            asi_value = calc_asi(srf_min_max)
+        elif isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
+            asi_value = calc_asi(srf_samples)
 
     if should_attach_distribution_summary:
         if isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
             _persist_distribution_samples(cards_arrangement, srf_samples)
-        elif isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
-            _persist_distribution_samples(cards_arrangement, srf_min_max)
+        else:
+            clear_distribution_samples()
 
-    # Export the 2D projection consumed by Plotly. Extreme-only modular mode skips
-    # PCA because it does not generate the dense cloud that plot expects.
-    skip_pca = bool(is_modular and modular_output_variability and modular_variability_method == 'extreme')
-    if not skip_pca:
+        if isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
+            _persist_extreme_scenarios(cards_arrangement, srf_min_max)
+        else:
+            clear_extreme_scenarios()
+
+        _persist_variability_export_payload(
+            cards_arrangement,
+            sampling_df=srf_samples if isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty else None,
+            extreme_df=srf_min_max if isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty else None,
+            sampling_source='samples',
+            extreme_source='min_max'
+        )
+    else:
+        clear_distribution_samples()
+        clear_extreme_scenarios()
+        clear_variability_export_payload()
+
+    # Export the 2D projection consumed by Plotly whenever a sample cloud exists.
+    if isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
+        update_calculation_progress(
+            stage='projection',
+            message='Preparing PCA projection...',
+            current=0,
+            total=1,
+            active=True,
+            done=False
+        )
         pca_vertices = srf_vertices
         if (isinstance(srf_samples, pd.DataFrame)
                 and isinstance(srf_vertices, pd.DataFrame)
@@ -1449,6 +1681,15 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             if srf_samples is srf_vertices or overlapping_index:
                 pca_vertices = None
         calc_pca(srf_samples, selected=simos_calc_results['k_i'], vertices=pca_vertices)
+
+    update_calculation_progress(
+        stage='finalizing',
+        message='Finalizing SRF results...',
+        current=1,
+        total=1,
+        active=True,
+        done=False
+    )
 
     return simos_calc_results, asi_value
 
@@ -1514,12 +1755,102 @@ def _phase_one_feasible_point(A_ub, b_ub, A_eq, b_eq):
     return result.x
 
 
-def _hit_and_run_polytope(A_ub, b_ub, A_eq, x0, n_samples, burn_in, thinning, rng):
+def _lp_var_is_continuous(var):
+    """
+    Returns True when a PuLP-backed variable is continuous.
+    """
+    return str(getattr(var, 'cat', 'Continuous')).strip().lower() == 'continuous'
+
+
+def _extract_freeopt_polytope(model):
+    """
+    Converts the current FreeOpt/PuLP model into matrix form for hit-and-run.
+    """
+    variables = list(getattr(model, '_vars', []))
+    n_vars = len(variables)
+    if n_vars == 0:
+        return (
+            variables,
+            np.empty((0, 0), dtype=float),
+            np.empty((0,), dtype=float),
+            np.empty((0, 0), dtype=float),
+            np.empty((0,), dtype=float),
+        )
+
+    var_pos = {var: idx for idx, var in enumerate(variables)}
+    A_ub_rows = []
+    b_ub_rows = []
+    A_eq_rows = []
+    b_eq_rows = []
+
+    for idx, var in enumerate(variables):
+        lb = getattr(var, 'lowBound', None)
+        ub = getattr(var, 'upBound', None)
+
+        if lb is not None:
+            lb = float(lb)
+            if np.isfinite(lb):
+                row = np.zeros(n_vars, dtype=float)
+                row[idx] = -1.0
+                A_ub_rows.append(row)
+                b_ub_rows.append(-lb)
+
+        if ub is not None:
+            ub = float(ub)
+            if np.isfinite(ub):
+                row = np.zeros(n_vars, dtype=float)
+                row[idx] = 1.0
+                A_ub_rows.append(row)
+                b_ub_rows.append(ub)
+
+    for constraint in getattr(model, '_problem', {}).constraints.values():
+        row = np.zeros(n_vars, dtype=float)
+        for var, coeff in constraint.items():
+            row[var_pos[var]] = float(coeff)
+
+        rhs = -float(constraint.constant)
+        sense = int(constraint.sense)
+        if sense == -1:
+            A_ub_rows.append(row)
+            b_ub_rows.append(rhs)
+        elif sense == 1:
+            A_ub_rows.append(-row)
+            b_ub_rows.append(-rhs)
+        elif sense == 0:
+            A_eq_rows.append(row)
+            b_eq_rows.append(rhs)
+
+    A_ub = np.asarray(A_ub_rows, dtype=float) if A_ub_rows else np.empty((0, n_vars), dtype=float)
+    b_ub = np.asarray(b_ub_rows, dtype=float) if b_ub_rows else np.empty((0,), dtype=float)
+    A_eq = np.asarray(A_eq_rows, dtype=float) if A_eq_rows else np.empty((0, n_vars), dtype=float)
+    b_eq = np.asarray(b_eq_rows, dtype=float) if b_eq_rows else np.empty((0,), dtype=float)
+    return variables, A_ub, b_ub, A_eq, b_eq
+
+
+def _hit_and_run_polytope(A_ub,
+                          b_ub,
+                          A_eq,
+                          x0,
+                          n_samples,
+                          burn_in,
+                          thinning,
+                          rng,
+                          progress_stage=None,
+                          progress_message='Sampling feasible solutions'):
     """
     Hit-and-run sampler over a polytope defined by A_ub x <= b_ub and A_eq x = const.
     """
     basis = _nullspace_matrix(A_eq)
     if basis.size == 0:
+        if progress_stage is not None:
+            update_calculation_progress(
+                progress_stage,
+                progress_message,
+                current=n_samples,
+                total=n_samples,
+                active=True,
+                done=False
+            )
         return np.repeat(np.asarray(x0, dtype=float)[None, :], repeats=n_samples, axis=0)
 
     x_vec = np.asarray(x0, dtype=float).copy()
@@ -1528,6 +1859,16 @@ def _hit_and_run_polytope(A_ub, b_ub, A_eq, x0, n_samples, burn_in, thinning, rn
     n_target_steps = int(burn_in + thinning * n_samples)
     max_steps = max(n_target_steps * 3, n_target_steps + 500)
     steps = 0
+
+    if progress_stage is not None:
+        update_calculation_progress(
+            progress_stage,
+            progress_message,
+            current=0,
+            total=n_samples,
+            active=True,
+            done=False
+        )
 
     while len(samples) < n_samples and steps < max_steps:
         steps += 1
@@ -1566,15 +1907,111 @@ def _hit_and_run_polytope(A_ub, b_ub, A_eq, x0, n_samples, burn_in, thinning, rn
 
         if steps > burn_in and ((steps - burn_in) % thinning == 0):
             samples.append(x_vec.copy())
+            if progress_stage is not None and _should_emit_progress(len(samples), n_samples):
+                update_calculation_progress(
+                    progress_stage,
+                    progress_message,
+                    current=len(samples),
+                    total=n_samples,
+                    active=True,
+                    done=False
+                )
 
     if not samples:
         return np.repeat(np.asarray(x0, dtype=float)[None, :], repeats=n_samples, axis=0)
 
     if len(samples) < n_samples:
         pad = np.repeat(np.asarray(samples[-1])[None, :], repeats=n_samples - len(samples), axis=0)
-        return np.vstack([np.asarray(samples), pad])
+        output = np.vstack([np.asarray(samples), pad])
+        if progress_stage is not None:
+            update_calculation_progress(
+                progress_stage,
+                progress_message,
+                current=n_samples,
+                total=n_samples,
+                active=True,
+                done=False
+            )
+        return output
 
-    return np.asarray(samples[:n_samples])
+    output = np.asarray(samples[:n_samples])
+    if progress_stage is not None:
+        update_calculation_progress(
+            progress_stage,
+            progress_message,
+            current=n_samples,
+            total=n_samples,
+            active=True,
+            done=False
+    )
+    return output
+
+
+def _try_hit_and_run_model_samples(model,
+                                   weights,
+                                   criteria_cards,
+                                   n_samples,
+                                   normalized=True,
+                                   progress_message='Uniformly sampling feasible solutions'):
+    """
+    Runs hit-and-run on the continuous feasible model and projects samples to weights.
+    """
+    variables = list(getattr(model, '_vars', []))
+    if not variables or any(not _lp_var_is_continuous(var) for var in variables):
+        return None
+
+    _optimize_model(model)
+    if model.status != GRB.OPTIMAL:
+        return None
+
+    variables, A_ub, b_ub, A_eq, b_eq = _extract_freeopt_polytope(model)
+    if not variables:
+        return None
+
+    try:
+        x0 = np.asarray([float(var.X) for var in variables], dtype=float)
+        if not np.all(np.isfinite(x0)):
+            raise ValueError("Non-finite seed point from solver.")
+    except Exception:
+        x0 = _phase_one_feasible_point(A_ub, b_ub, A_eq, b_eq)
+
+    rng_seed = int(np.random.randint(0, np.iinfo(np.int32).max))
+    rng = np.random.default_rng(rng_seed)
+    n_vars = len(variables)
+    burn_in = min(max(200, 8 * n_vars), 2000)
+    thinning = max(1, min(6, max(1, n_vars // 2)))
+    sampled_points = _hit_and_run_polytope(
+        A_ub=A_ub,
+        b_ub=b_ub,
+        A_eq=A_eq,
+        x0=x0,
+        n_samples=int(max(1, n_samples)),
+        burn_in=burn_in,
+        thinning=thinning,
+        rng=rng,
+        progress_stage='sampling',
+        progress_message=progress_message
+    )
+
+    weight_positions = {
+        var: idx for idx, var in enumerate(variables)
+    }
+    weight_matrix = np.column_stack([
+        sampled_points[:, weight_positions[weights[idx]]]
+        for idx in criteria_cards.index
+    ]) if len(criteria_cards.index) else np.empty((len(sampled_points), 0), dtype=float)
+
+    if normalized and weight_matrix.size:
+        row_sums = weight_matrix.sum(axis=1, keepdims=True)
+        positive_mask = row_sums[:, 0] > 0
+        if positive_mask.any():
+            weight_matrix[positive_mask] = (
+                weight_matrix[positive_mask] / row_sums[positive_mask]
+            ) * 100.0
+
+    hitrun_df = pd.DataFrame(weight_matrix, columns=criteria_cards.index)
+    hitrun_df.index = [f'sample_{idx + 1}' for idx in range(len(hitrun_df))]
+    return hitrun_df
 
 
 def _try_hit_and_run_zero_dynamic_samples(cards_arrangement,
@@ -1729,7 +2166,9 @@ def _try_hit_and_run_zero_dynamic_samples(cards_arrangement,
         n_samples=int(max(1, n_samples)),
         burn_in=burn_in,
         thinning=thinning,
-        rng=rng
+        rng=rng,
+        progress_stage='sampling',
+        progress_message='Sampling feasible solutions'
     )
 
     crit_indices = list(criteria_cards.index)
@@ -1741,7 +2180,9 @@ def _try_hit_and_run_zero_dynamic_samples(cards_arrangement,
     if normalized:
         sample_matrix *= 100.0
 
-    return pd.DataFrame(sample_matrix, columns=crit_indices)
+    hitrun_df = pd.DataFrame(sample_matrix, columns=crit_indices)
+    hitrun_df.index = [f'sample_{idx + 1}' for idx in range(len(hitrun_df))]
+    return hitrun_df
 
 
 def _estimate_linear_spacing_e0_anchor(e_value):
@@ -3196,147 +3637,145 @@ def _build_srf_model(cards_arrangement,
         gap_t_scale = dynamic_gap_t_scales.get(int(prev_rank), t_scale)
 
         # Add constraint based on comp_rule_successive
-        match comp_rule_successive:
-            case 'fixed-spacing':
-                model.addConstr(
-                    weights[curr_index] - weights[prev_index] == delta * rank_white_count[prev_rank],
-                    f"successive_fixed_{prev_rank}_{curr_rank}"
-                )
-            case 'fully-flexible':
+        if comp_rule_successive == 'fixed-spacing':
+            model.addConstr(
+                weights[curr_index] - weights[prev_index] == delta * rank_white_count[prev_rank],
+                f"successive_fixed_{prev_rank}_{curr_rank}"
+            )
+        elif comp_rule_successive == 'fully-flexible':
+            model.addConstr(
+                weights[curr_index] - weights[prev_index] >= min_delta * rank_white_count[prev_rank],
+                f"successive_flexible_{prev_rank}_{curr_rank}"
+            )
+        elif comp_rule_successive == 'interval-constrained':
+            if dynamic_unit_weight:
                 model.addConstr(
                     weights[curr_index] - weights[prev_index] >= min_delta * rank_white_count[prev_rank],
-                    f"successive_flexible_{prev_rank}_{curr_rank}"
+                    f"successive_interval_dynamic_lb_{prev_rank}_{curr_rank}"
                 )
-            case 'interval-constrained':
-                if dynamic_unit_weight:
-                    model.addConstr(
-                        weights[curr_index] - weights[prev_index] >= min_delta * rank_white_count[prev_rank],
-                        f"successive_interval_dynamic_lb_{prev_rank}_{curr_rank}"
-                    )
-                else:
-                    has_interval_bounds = (
-                        isinstance(e_value, dict)
-                        and f'emin_{prev_rank}' in e_value
-                        and f'emax_{prev_rank}' in e_value
-                    )
-                    if has_interval_bounds:
-                        min_units = float(e_value[f'emin_{prev_rank}']) + 1.0
-                        max_units = float(e_value[f'emax_{prev_rank}']) + 1.0
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] >= gap_delta_scale * min_units,
-                            f"successive_interval_lb_{prev_rank}_{curr_rank}"
-                        )
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] <= gap_delta_scale * max_units,
-                            f"successive_interval_ub_{prev_rank}_{curr_rank}"
-                        )
-                    else:
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] == gap_delta_scale * rank_white_count[prev_rank],
-                            f"successive_interval_fixed_{prev_rank}_{curr_rank}"
-                        )
-            case 'probability-distribution':
-                if dynamic_unit_weight:
-                    model.addConstr(
-                        weights[curr_index] - weights[prev_index] >= min_delta * rank_white_count[prev_rank],
-                        f"successive_probabilistic_dynamic_lb_{prev_rank}_{curr_rank}"
-                    )
-                else:
-                    e_values_rank = e_probability_cloud.get(prev_rank, {})
-                    if e_values_rank:
-                        min_units = float(min(e_values_rank.keys())) + 1.0
-                        max_units = float(max(e_values_rank.keys())) + 1.0
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] >= gap_delta_scale * min_units,
-                            f"successive_probabilistic_lb_{prev_rank}_{curr_rank}"
-                        )
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] <= gap_delta_scale * max_units,
-                            f"successive_probabilistic_ub_{prev_rank}_{curr_rank}"
-                        )
-                    else:
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] == gap_delta_scale * rank_white_count[prev_rank],
-                            f"successive_probabilistic_fixed_{prev_rank}_{curr_rank}"
-                        )
-            case 'hfl-linguistic-interval':
-                r_min_term = e_value.get(f'rmin_{prev_rank}', 1)
-                r_max_term = e_value.get(f'rmax_{prev_rank}', r_min_term)
-
-                if r_max_term < r_min_term:
-                    raise ValueError(
-                        f"Invalid HFL interval for rank pair {prev_rank}-{curr_rank}: r_min > r_max."
+            else:
+                has_interval_bounds = (
+                    isinstance(e_value, dict)
+                    and f'emin_{prev_rank}' in e_value
+                    and f'emax_{prev_rank}' in e_value
                 )
-                r_min = _map_hfl_card_term(r_min_term)
-                r_max = _map_hfl_card_term(r_max_term)
-
-                if dynamic_unit_weight:
+                if has_interval_bounds:
+                    min_units = float(e_value[f'emin_{prev_rank}']) + 1.0
+                    max_units = float(e_value[f'emax_{prev_rank}']) + 1.0
                     model.addConstr(
-                        weights[curr_index] - weights[prev_index] >= min_delta * rank_white_count[prev_rank],
-                        f"successive_hfl_dynamic_lb_{prev_rank}_{curr_rank}"
+                        weights[curr_index] - weights[prev_index] >= gap_delta_scale * min_units,
+                        f"successive_interval_lb_{prev_rank}_{curr_rank}"
+                    )
+                    model.addConstr(
+                        weights[curr_index] - weights[prev_index] <= gap_delta_scale * max_units,
+                        f"successive_interval_ub_{prev_rank}_{curr_rank}"
                     )
                 else:
                     model.addConstr(
-                        weights[curr_index] - weights[prev_index] >= r_min * gap_t_scale,
-                        f"successive_hfl_lb_{prev_rank}_{curr_rank}"
+                        weights[curr_index] - weights[prev_index] == gap_delta_scale * rank_white_count[prev_rank],
+                        f"successive_interval_fixed_{prev_rank}_{curr_rank}"
+                    )
+        elif comp_rule_successive == 'probability-distribution':
+            if dynamic_unit_weight:
+                model.addConstr(
+                    weights[curr_index] - weights[prev_index] >= min_delta * rank_white_count[prev_rank],
+                    f"successive_probabilistic_dynamic_lb_{prev_rank}_{curr_rank}"
+                )
+            else:
+                e_values_rank = e_probability_cloud.get(prev_rank, {})
+                if e_values_rank:
+                    min_units = float(min(e_values_rank.keys())) + 1.0
+                    max_units = float(max(e_values_rank.keys())) + 1.0
+                    model.addConstr(
+                        weights[curr_index] - weights[prev_index] >= gap_delta_scale * min_units,
+                        f"successive_probabilistic_lb_{prev_rank}_{curr_rank}"
                     )
                     model.addConstr(
-                        weights[curr_index] - weights[prev_index] <= r_max * gap_t_scale,
-                        f"successive_hfl_ub_{prev_rank}_{curr_rank}"
+                        weights[curr_index] - weights[prev_index] <= gap_delta_scale * max_units,
+                        f"successive_probabilistic_ub_{prev_rank}_{curr_rank}"
                     )
-            case _:
-                raise ValueError('Invalid rule for comparison of successive ranks')
+                else:
+                    model.addConstr(
+                        weights[curr_index] - weights[prev_index] == gap_delta_scale * rank_white_count[prev_rank],
+                        f"successive_probabilistic_fixed_{prev_rank}_{curr_rank}"
+                    )
+        elif comp_rule_successive == 'hfl-linguistic-interval':
+            r_min_term = e_value.get(f'rmin_{prev_rank}', 1)
+            r_max_term = e_value.get(f'rmax_{prev_rank}', r_min_term)
+
+            if r_max_term < r_min_term:
+                raise ValueError(
+                    f"Invalid HFL interval for rank pair {prev_rank}-{curr_rank}: r_min > r_max."
+                )
+            r_min = _map_hfl_card_term(r_min_term)
+            r_max = _map_hfl_card_term(r_max_term)
+
+            if dynamic_unit_weight:
+                model.addConstr(
+                    weights[curr_index] - weights[prev_index] >= min_delta * rank_white_count[prev_rank],
+                    f"successive_hfl_dynamic_lb_{prev_rank}_{curr_rank}"
+                )
+            else:
+                model.addConstr(
+                    weights[curr_index] - weights[prev_index] >= r_min * gap_t_scale,
+                    f"successive_hfl_lb_{prev_rank}_{curr_rank}"
+                )
+                model.addConstr(
+                    weights[curr_index] - weights[prev_index] <= r_max * gap_t_scale,
+                    f"successive_hfl_ub_{prev_rank}_{curr_rank}"
+                )
+        else:
+            raise ValueError('Invalid rule for comparison of successive ranks')
 
         # >>> SMAA <<<
         if launch_smaa:
-            match comp_rule_successive:
-                case 'fully-flexible':
-                    if ratio_mode != 'interval-successive':
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] == np.random.uniform(min_delta * rank_white_count[prev_rank], 100),
-                            f"successive_smaa_{prev_rank}_{curr_rank}"
-                        )
-                case 'interval-constrained':
-                    has_interval_bounds = (
-                        isinstance(e_value, dict)
-                        and f'emin_{prev_rank}' in e_value
-                        and f'emax_{prev_rank}' in e_value
+            if comp_rule_successive == 'fully-flexible':
+                if ratio_mode != 'interval-successive':
+                    model.addConstr(
+                        weights[curr_index] - weights[prev_index] == np.random.uniform(min_delta * rank_white_count[prev_rank], 100),
+                        f"successive_smaa_{prev_rank}_{curr_rank}"
                     )
-                    if has_interval_bounds:
-                        e_value_sample = np.random.uniform(e_value[f'emin_{prev_rank}'], e_value[f'emax_{prev_rank}'])
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] == gap_delta_scale * (e_value_sample + 1),
-                            f"successive_smaa_{prev_rank}_{curr_rank}"
-                        )
-                    else:
-                        model.addConstr(
-                            weights[curr_index] - weights[prev_index] == gap_delta_scale * rank_white_count[prev_rank],
-                            f"successive_smaa_{prev_rank}_{curr_rank}"
-                        )
-                case 'probability-distribution':
-                    e_values_rank = e_probability_cloud.get(prev_rank, {})
-                    if e_values_rank:
-                        e_value_sample = np.random.uniform(min(e_values_rank.keys()), max(e_values_rank.keys()))
-                    else:
-                        e_value_sample = float(rank_white_count[prev_rank] - 1)
+            elif comp_rule_successive == 'interval-constrained':
+                has_interval_bounds = (
+                    isinstance(e_value, dict)
+                    and f'emin_{prev_rank}' in e_value
+                    and f'emax_{prev_rank}' in e_value
+                )
+                if has_interval_bounds:
+                    e_value_sample = np.random.uniform(e_value[f'emin_{prev_rank}'], e_value[f'emax_{prev_rank}'])
                     model.addConstr(
                         weights[curr_index] - weights[prev_index] == gap_delta_scale * (e_value_sample + 1),
                         f"successive_smaa_{prev_rank}_{curr_rank}"
                     )
-                case 'hfl-linguistic-interval':
-                    r_min_term = int(e_value.get(f'rmin_{prev_rank}', 1))
-                    r_max_term = int(e_value.get(f'rmax_{prev_rank}', r_min_term))
-                    if r_max_term < r_min_term:
-                        raise ValueError(
-                            f"Invalid HFL interval for rank pair {prev_rank}-{curr_rank}: r_min > r_max."
-                        )
-                    r_min = _map_hfl_card_term(r_min_term)
-                    r_max = _map_hfl_card_term(r_max_term)
-                    r_value_sample = random.randint(r_min, r_max)
+                else:
                     model.addConstr(
-                        weights[curr_index] - weights[prev_index] == r_value_sample * gap_t_scale,
+                        weights[curr_index] - weights[prev_index] == gap_delta_scale * rank_white_count[prev_rank],
                         f"successive_smaa_{prev_rank}_{curr_rank}"
                     )
+            elif comp_rule_successive == 'probability-distribution':
+                e_values_rank = e_probability_cloud.get(prev_rank, {})
+                if e_values_rank:
+                    e_value_sample = np.random.uniform(min(e_values_rank.keys()), max(e_values_rank.keys()))
+                else:
+                    e_value_sample = float(rank_white_count[prev_rank] - 1)
+                model.addConstr(
+                    weights[curr_index] - weights[prev_index] == gap_delta_scale * (e_value_sample + 1),
+                    f"successive_smaa_{prev_rank}_{curr_rank}"
+                )
+            elif comp_rule_successive == 'hfl-linguistic-interval':
+                r_min_term = int(e_value.get(f'rmin_{prev_rank}', 1))
+                r_max_term = int(e_value.get(f'rmax_{prev_rank}', r_min_term))
+                if r_max_term < r_min_term:
+                    raise ValueError(
+                        f"Invalid HFL interval for rank pair {prev_rank}-{curr_rank}: r_min > r_max."
+                    )
+                r_min = _map_hfl_card_term(r_min_term)
+                r_max = _map_hfl_card_term(r_max_term)
+                r_value_sample = random.randint(r_min, r_max)
+                model.addConstr(
+                    weights[curr_index] - weights[prev_index] == r_value_sample * gap_t_scale,
+                    f"successive_smaa_{prev_rank}_{curr_rank}"
+                )
 
     # Optional MILP layer for modular robust+imprecise combinations:
     # enforce conditional ordering/equality relations between successive gaps.
@@ -3366,20 +3805,69 @@ def _build_srf_model(cards_arrangement,
     z_values_pb = None
     e0_values_pb = None
     e0_interval_bounds = None
-    match ratio_mode:
-        case 'exact-ratio':
-            model.addConstr(
-                weights[max_index] == z_value * weights[min_index],
-                "z_ratio_constraint"
-            )
-        case 'linear-spacing':
-            default_bar_sum = sum(float(max(1, rank_white_count[rank])) for rank in sorted_ranks[:-1])
+    if ratio_mode == 'exact-ratio':
+        model.addConstr(
+            weights[max_index] == z_value * weights[min_index],
+            "z_ratio_constraint"
+        )
+    elif ratio_mode == 'linear-spacing':
+        default_bar_sum = sum(float(max(1, rank_white_count[rank])) for rank in sorted_ranks[:-1])
 
-            def _bar_e_bounds_for_gap(prev_rank):
-                # bar{e}_s = e_s + 1 in interval/probability settings, and mapped HFL term for fuzzy settings.
+        def _bar_e_bounds_for_gap(prev_rank):
+            # bar{e}_s = e_s + 1 in interval/probability settings, and mapped HFL term for fuzzy settings.
+            default_bar = float(max(1, rank_white_count.get(prev_rank, 1)))
+            if not isinstance(e_value, dict):
+                return default_bar, default_bar
+
+            if comp_rule_successive == 'interval-constrained':
+                e_min_key = f'emin_{prev_rank}'
+                e_max_key = f'emax_{prev_rank}'
+                if e_min_key in e_value and e_max_key in e_value:
+                    low = float(e_value[e_min_key]) + 1.0
+                    high = float(e_value[e_max_key]) + 1.0
+                    if high < low:
+                        raise ValueError(
+                            f"Invalid rank-gap interval for rank {prev_rank}: emin > emax."
+                        )
+                    return max(1.0, low), max(1.0, high)
+
+            if comp_rule_successive == 'probability-distribution':
+                cloud = _extract_probability_pairs(
+                    e_value,
+                    value_prefix=f"e-value-{prev_rank}-",
+                    beta_prefix=f"e-beta-{prev_rank}-",
+                )
+                if cloud:
+                    low = float(min(cloud.keys())) + 1.0
+                    high = float(max(cloud.keys())) + 1.0
+                    return max(1.0, low), max(1.0, high)
+
+            if comp_rule_successive == 'hfl-linguistic-interval':
+                if f'rmin_{prev_rank}' in e_value or f'rmax_{prev_rank}' in e_value:
+                    r_min_term = int(e_value.get(f'rmin_{prev_rank}', e_value.get(f'rmax_{prev_rank}', 1)))
+                    r_max_term = int(e_value.get(f'rmax_{prev_rank}', e_value.get(f'rmin_{prev_rank}', r_min_term)))
+                    if r_max_term < r_min_term:
+                        raise ValueError(
+                            f"Invalid HFL rank-gap interval for rank {prev_rank}: rmin > rmax."
+                        )
+                    return float(_map_hfl_card_term(r_min_term)), float(_map_hfl_card_term(r_max_term))
+
+            return default_bar, default_bar
+
+        bar_sum_low = 0.0
+        bar_sum_high = 0.0
+        for prev_rank in sorted_ranks[:-1]:
+            gap_low, gap_high = _bar_e_bounds_for_gap(prev_rank)
+            bar_sum_low += gap_low
+            bar_sum_high += gap_high
+
+        def _sample_bar_sum():
+            sampled_sum = 0.0
+            for prev_rank in sorted_ranks[:-1]:
                 default_bar = float(max(1, rank_white_count.get(prev_rank, 1)))
                 if not isinstance(e_value, dict):
-                    return default_bar, default_bar
+                    sampled_sum += default_bar
+                    continue
 
                 if comp_rule_successive == 'interval-constrained':
                     e_min_key = f'emin_{prev_rank}'
@@ -3387,134 +3875,103 @@ def _build_srf_model(cards_arrangement,
                     if e_min_key in e_value and e_max_key in e_value:
                         low = float(e_value[e_min_key]) + 1.0
                         high = float(e_value[e_max_key]) + 1.0
-                        if high < low:
-                            raise ValueError(
-                                f"Invalid rank-gap interval for rank {prev_rank}: emin > emax."
-                            )
-                        return max(1.0, low), max(1.0, high)
+                        sampled_sum += np.random.uniform(min(low, high), max(low, high))
+                        continue
 
                 if comp_rule_successive == 'probability-distribution':
-                    cloud = _extract_probability_pairs(
-                        e_value,
-                        value_prefix=f"e-value-{prev_rank}-",
-                        beta_prefix=f"e-beta-{prev_rank}-",
-                    )
+                    cloud = e_probability_cloud.get(prev_rank, {})
                     if cloud:
-                        low = float(min(cloud.keys())) + 1.0
-                        high = float(max(cloud.keys())) + 1.0
-                        return max(1.0, low), max(1.0, high)
+                        support = np.array(list(cloud.keys()), dtype=float)
+                        probs = np.array(list(cloud.values()), dtype=float)
+                        sampled_e = float(np.random.choice(support, p=probs))
+                        sampled_sum += sampled_e + 1.0
+                        continue
 
                 if comp_rule_successive == 'hfl-linguistic-interval':
                     if f'rmin_{prev_rank}' in e_value or f'rmax_{prev_rank}' in e_value:
                         r_min_term = int(e_value.get(f'rmin_{prev_rank}', e_value.get(f'rmax_{prev_rank}', 1)))
                         r_max_term = int(e_value.get(f'rmax_{prev_rank}', e_value.get(f'rmin_{prev_rank}', r_min_term)))
-                        if r_max_term < r_min_term:
-                            raise ValueError(
-                                f"Invalid HFL rank-gap interval for rank {prev_rank}: rmin > rmax."
-                            )
-                        return float(_map_hfl_card_term(r_min_term)), float(_map_hfl_card_term(r_max_term))
-
-                return default_bar, default_bar
-
-            bar_sum_low = 0.0
-            bar_sum_high = 0.0
-            for prev_rank in sorted_ranks[:-1]:
-                gap_low, gap_high = _bar_e_bounds_for_gap(prev_rank)
-                bar_sum_low += gap_low
-                bar_sum_high += gap_high
-
-            def _sample_bar_sum():
-                sampled_sum = 0.0
-                for prev_rank in sorted_ranks[:-1]:
-                    default_bar = float(max(1, rank_white_count.get(prev_rank, 1)))
-                    if not isinstance(e_value, dict):
-                        sampled_sum += default_bar
+                        r_low = _map_hfl_card_term(min(r_min_term, r_max_term))
+                        r_high = _map_hfl_card_term(max(r_min_term, r_max_term))
+                        sampled_sum += float(random.randint(r_low, r_high))
                         continue
 
-                    if comp_rule_successive == 'interval-constrained':
-                        e_min_key = f'emin_{prev_rank}'
-                        e_max_key = f'emax_{prev_rank}'
-                        if e_min_key in e_value and e_max_key in e_value:
-                            low = float(e_value[e_min_key]) + 1.0
-                            high = float(e_value[e_max_key]) + 1.0
-                            sampled_sum += np.random.uniform(min(low, high), max(low, high))
-                            continue
+                sampled_sum += default_bar
+            return sampled_sum
 
-                    if comp_rule_successive == 'probability-distribution':
-                        cloud = e_probability_cloud.get(prev_rank, {})
-                        if cloud:
-                            support = np.array(list(cloud.keys()), dtype=float)
-                            probs = np.array(list(cloud.values()), dtype=float)
-                            sampled_e = float(np.random.choice(support, p=probs))
-                            sampled_sum += sampled_e + 1.0
-                            continue
+        def _z_bounds_from_intervals(bar_low, bar_high, e0_low, e0_high):
+            e0_low = float(e0_low)
+            e0_high = float(e0_high)
+            if e0_low < 0 or e0_high < 0:
+                raise ValueError("e0 bounds must be non-negative for linear-spacing mode.")
+            if e0_high < e0_low:
+                raise ValueError("Invalid e0 interval: emin_0 > emax_0.")
+            z_low = (float(bar_low) + e0_high + 1.0) / (e0_high + 1.0)
+            z_high = (float(bar_high) + e0_low + 1.0) / (e0_low + 1.0)
+            if z_high < z_low:
+                z_low, z_high = z_high, z_low
+            return z_low, z_high
 
-                    if comp_rule_successive == 'hfl-linguistic-interval':
-                        if f'rmin_{prev_rank}' in e_value or f'rmax_{prev_rank}' in e_value:
-                            r_min_term = int(e_value.get(f'rmin_{prev_rank}', e_value.get(f'rmax_{prev_rank}', 1)))
-                            r_max_term = int(e_value.get(f'rmax_{prev_rank}', e_value.get(f'rmin_{prev_rank}', r_min_term)))
-                            r_low = _map_hfl_card_term(min(r_min_term, r_max_term))
-                            r_high = _map_hfl_card_term(max(r_min_term, r_max_term))
-                            sampled_sum += float(random.randint(r_low, r_high))
-                            continue
-
-                    sampled_sum += default_bar
-                return sampled_sum
-
-            def _z_bounds_from_intervals(bar_low, bar_high, e0_low, e0_high):
-                e0_low = float(e0_low)
-                e0_high = float(e0_high)
-                if e0_low < 0 or e0_high < 0:
-                    raise ValueError("e0 bounds must be non-negative for linear-spacing mode.")
-                if e0_high < e0_low:
-                    raise ValueError("Invalid e0 interval: emin_0 > emax_0.")
-                z_low = (float(bar_low) + e0_high + 1.0) / (e0_high + 1.0)
-                z_high = (float(bar_high) + e0_low + 1.0) / (e0_low + 1.0)
-                if z_high < z_low:
-                    z_low, z_high = z_high, z_low
-                return z_low, z_high
-
-            e0_exact = None
-            if isinstance(e_value, dict):
-                if comp_rule_successive == 'probability-distribution':
-                    e0_cloud = _extract_probability_pairs(
-                        e_value,
-                        value_prefix='e-value-0-',
-                        beta_prefix='e-beta-0-',
-                    )
-                    if e0_cloud:
-                        e0_values_pb = _normalize_probability_cloud(e0_cloud)
-                        e0_min = min(e0_values_pb.keys())
-                        e0_max = max(e0_values_pb.keys())
-                        e0_interval_bounds = (float(e0_min), float(e0_max))
-                    elif 'e0' in e_value:
-                        e0_exact = float(e_value.get('e0', 0))
-                if e0_exact is None and comp_rule_successive == 'hfl-linguistic-interval' and ('rmin_0' in e_value or 'rmax_0' in e_value):
-                    r_min_term = int(e_value.get('rmin_0', 1))
-                    r_max_term = int(e_value.get('rmax_0', r_min_term))
-                    if r_max_term < r_min_term:
-                        raise ValueError('Invalid HFL e0 interval: rmin_0 > rmax_0.')
-                    e0_min = float(_map_hfl_card_term(r_min_term))
-                    e0_max = float(_map_hfl_card_term(r_max_term))
-                    e0_interval_bounds = (e0_min, e0_max)
-                if e0_exact is None and ('emin_0' in e_value or 'emax_0' in e_value):
-                    e0_min = float(e_value.get('emin_0', e_value.get('emax_0', 0)))
-                    e0_max = float(e_value.get('emax_0', e_value.get('emin_0', e0_min)))
-                    if e0_max < e0_min:
-                        raise ValueError('Invalid e0 interval: emin_0 > emax_0.')
-                    e0_interval_bounds = (e0_min, e0_max)
-                if e0_exact is None and e0_interval_bounds is None:
+        e0_exact = None
+        if isinstance(e_value, dict):
+            if comp_rule_successive == 'probability-distribution':
+                e0_cloud = _extract_probability_pairs(
+                    e_value,
+                    value_prefix='e-value-0-',
+                    beta_prefix='e-beta-0-',
+                )
+                if e0_cloud:
+                    e0_values_pb = _normalize_probability_cloud(e0_cloud)
+                    e0_min = min(e0_values_pb.keys())
+                    e0_max = max(e0_values_pb.keys())
+                    e0_interval_bounds = (float(e0_min), float(e0_max))
+                elif 'e0' in e_value:
                     e0_exact = float(e_value.get('e0', 0))
-            else:
-                e0_exact = float(e_value)
+            if e0_exact is None and comp_rule_successive == 'hfl-linguistic-interval' and ('rmin_0' in e_value or 'rmax_0' in e_value):
+                r_min_term = int(e_value.get('rmin_0', 1))
+                r_max_term = int(e_value.get('rmax_0', r_min_term))
+                if r_max_term < r_min_term:
+                    raise ValueError('Invalid HFL e0 interval: rmin_0 > rmax_0.')
+                e0_min = float(_map_hfl_card_term(r_min_term))
+                e0_max = float(_map_hfl_card_term(r_max_term))
+                e0_interval_bounds = (e0_min, e0_max)
+            if e0_exact is None and ('emin_0' in e_value or 'emax_0' in e_value):
+                e0_min = float(e_value.get('emin_0', e_value.get('emax_0', 0)))
+                e0_max = float(e_value.get('emax_0', e_value.get('emin_0', e0_min)))
+                if e0_max < e0_min:
+                    raise ValueError('Invalid e0 interval: emin_0 > emax_0.')
+                e0_interval_bounds = (e0_min, e0_max)
+            if e0_exact is None and e0_interval_bounds is None:
+                e0_exact = float(e_value.get('e0', 0))
+        else:
+            e0_exact = float(e_value)
 
-            if e0_interval_bounds is not None:
-                e0_low, e0_high = e0_interval_bounds
+        if e0_interval_bounds is not None:
+            e0_low, e0_high = e0_interval_bounds
+            z_low, z_high = _z_bounds_from_intervals(
+                bar_sum_low,
+                bar_sum_high,
+                e0_low,
+                e0_high,
+            )
+            model.addConstr(
+                weights[max_index] >= z_low * weights[min_index],
+                "z_ratio_constraint_min"
+            )
+            model.addConstr(
+                weights[max_index] <= z_high * weights[min_index],
+                "z_ratio_constraint_max"
+            )
+        else:
+            e0_anchor = float(e0_exact)
+            if e0_anchor < 0:
+                raise ValueError("e0 must be non-negative for linear-spacing mode.")
+            if abs(bar_sum_high - bar_sum_low) > 1e-9:
                 z_low, z_high = _z_bounds_from_intervals(
                     bar_sum_low,
                     bar_sum_high,
-                    e0_low,
-                    e0_high,
+                    e0_anchor,
+                    e0_anchor,
                 )
                 model.addConstr(
                     weights[max_index] >= z_low * weights[min_index],
@@ -3525,163 +3982,144 @@ def _build_srf_model(cards_arrangement,
                     "z_ratio_constraint_max"
                 )
             else:
-                e0_anchor = float(e0_exact)
-                if e0_anchor < 0:
-                    raise ValueError("e0 must be non-negative for linear-spacing mode.")
-                if abs(bar_sum_high - bar_sum_low) > 1e-9:
-                    z_low, z_high = _z_bounds_from_intervals(
-                        bar_sum_low,
-                        bar_sum_high,
-                        e0_anchor,
-                        e0_anchor,
-                    )
-                    model.addConstr(
-                        weights[max_index] >= z_low * weights[min_index],
-                        "z_ratio_constraint_min"
-                    )
-                    model.addConstr(
-                        weights[max_index] <= z_high * weights[min_index],
-                        "z_ratio_constraint_max"
-                    )
-                else:
-                    z_value = (bar_sum_low + e0_anchor + 1.0) / (e0_anchor + 1.0)
-                    model.addConstr(
-                        weights[max_index] == z_value * weights[min_index],
-                        "z_ratio_constraint"
-                    )
-        case 'interval-successive':
+                z_value = (bar_sum_low + e0_anchor + 1.0) / (e0_anchor + 1.0)
+                model.addConstr(
+                    weights[max_index] == z_value * weights[min_index],
+                    "z_ratio_constraint"
+                )
+    elif ratio_mode == 'interval-successive':
+        for rank in range(1, cards_arrangement['rank'].max()):
+            curr_rank = rank_groups[rank][0]
+            next_rank = rank_groups[rank + 1][0]
+
+            model.addConstr(
+                weights[next_rank] >= z_value[f'zmin_{rank}'] * weights[curr_rank],
+                f"z_ratio_constraint_min_{rank}"
+            )
+
+            model.addConstr(
+                weights[next_rank] <= z_value[f'zmax_{rank}'] * weights[curr_rank],
+                f"z_ratio_constraint_max_{rank}"
+            )
+    elif ratio_mode == 'interval-total':
+        model.addConstr(
+            weights[max_index] >= z_value['zmin'] * weights[min_index],
+            "z_ratio_constraint_min"
+        )
+
+        model.addConstr(
+            weights[max_index] <= z_value['zmax'] * weights[min_index],
+            "z_ratio_constraint_max"
+        )
+    elif ratio_mode == 'probability-cloud':
+        z_values_pb = _extract_probability_pairs(
+            z_value,
+            value_prefix='z-value-',
+            beta_prefix='z-beta-',
+        )
+        if not z_values_pb:
+            raise ValueError("No valid (z, beta) pairs were provided for belief-degree SRF.")
+        z_values_pb = _normalize_probability_cloud(z_values_pb)
+        model.addConstr(
+            weights[max_index] >= min(z_values_pb.keys()) * weights[min_index],
+            "z_ratio_constraint_min"
+        )
+
+        model.addConstr(
+            weights[max_index] <= max(z_values_pb.keys()) * weights[min_index],
+            "z_ratio_constraint_max"
+        )
+    elif ratio_mode == 'hfl-ratio-interval':
+        if isinstance(z_value, dict):
+            e_min_term = float(z_value.get('emin', z_value.get('zmin', 1.0)))
+            e_max_term = float(z_value.get('emax', z_value.get('zmax', e_min_term)))
+        else:
+            e_min_term = float(z_value)
+            e_max_term = float(z_value)
+
+        if e_max_term < e_min_term:
+            raise ValueError('Invalid HFL global ratio interval: e_min > e_max.')
+        e_min = _map_hfl_z_term(e_min_term)
+        e_max = _map_hfl_z_term(e_max_term)
+
+        model.addConstr(
+            weights[max_index] >= e_min * weights[min_index],
+            "z_ratio_hfl_min"
+        )
+        model.addConstr(
+            weights[max_index] <= e_max * weights[min_index],
+            "z_ratio_hfl_max"
+        )
+    else:
+        raise ValueError('Invalid z ratio mode')
+
+    # >>> SMAA <<<
+    if launch_smaa:
+        if ratio_mode == 'interval-successive':
             for rank in range(1, cards_arrangement['rank'].max()):
                 curr_rank = rank_groups[rank][0]
                 next_rank = rank_groups[rank + 1][0]
 
+                z_value_sample = np.random.uniform(z_value[f'zmin_{rank}'], z_value[f'zmax_{rank}'])
                 model.addConstr(
-                    weights[next_rank] >= z_value[f'zmin_{rank}'] * weights[curr_rank],
-                    f"z_ratio_constraint_min_{rank}"
+                    weights[next_rank] == z_value_sample * weights[curr_rank],
+                    f"z_ratio_constraint_smaa_{rank}"
                 )
-                model.addConstr(
-                    weights[next_rank] <= z_value[f'zmax_{rank}'] * weights[curr_rank],
-                    f"z_ratio_constraint_max_{rank}"
-                )
-        case 'interval-total':
+        elif ratio_mode == 'interval-total':
+            z_value_sample = np.random.uniform(z_value['zmin'], z_value['zmax'])
             model.addConstr(
-                weights[max_index] >= z_value['zmin'] * weights[min_index],
-                "z_ratio_constraint_min"
+                weights[max_index] == z_value_sample * weights[min_index],
+                "z_ratio_constraint_smaa"
             )
-
+        elif ratio_mode == 'probability-cloud':
+            z_value_sample = np.random.uniform(min(z_values_pb.keys()), max(z_values_pb.keys()))
             model.addConstr(
-                weights[max_index] <= z_value['zmax'] * weights[min_index],
-                "z_ratio_constraint_max"
+                weights[max_index] == z_value_sample * weights[min_index],
+                "z_ratio_constraint_smaa"
             )
-        case 'probability-cloud':
-            z_values_pb = _extract_probability_pairs(
-                z_value,
-                value_prefix='z-value-',
-                beta_prefix='z-beta-',
-            )
-            if not z_values_pb:
-                raise ValueError("No valid (z, beta) pairs were provided for belief-degree SRF.")
-            z_values_pb = _normalize_probability_cloud(z_values_pb)
-            model.addConstr(
-                weights[max_index] >= min(z_values_pb.keys()) * weights[min_index],
-                "z_ratio_constraint_min"
-            )
-
-            model.addConstr(
-                weights[max_index] <= max(z_values_pb.keys()) * weights[min_index],
-                "z_ratio_constraint_max"
-            )
-        case 'hfl-ratio-interval':
+        elif ratio_mode == 'hfl-ratio-interval':
             if isinstance(z_value, dict):
-                e_min_term = float(z_value.get('emin', z_value.get('zmin', 1.0)))
-                e_max_term = float(z_value.get('emax', z_value.get('zmax', e_min_term)))
+                e_min_term = int(z_value.get('emin', z_value.get('zmin', 1)))
+                e_max_term = int(z_value.get('emax', z_value.get('zmax', e_min_term)))
             else:
-                e_min_term = float(z_value)
-                e_max_term = float(z_value)
+                e_min_term = int(float(z_value))
+                e_max_term = int(float(z_value))
 
             if e_max_term < e_min_term:
                 raise ValueError('Invalid HFL global ratio interval: e_min > e_max.')
             e_min = _map_hfl_z_term(e_min_term)
             e_max = _map_hfl_z_term(e_max_term)
-
+            e_value_sample = random.randint(e_min, e_max)
             model.addConstr(
-                weights[max_index] >= e_min * weights[min_index],
-                "z_ratio_hfl_min"
+                weights[max_index] == e_value_sample * weights[min_index],
+                "z_ratio_constraint_smaa"
             )
-            model.addConstr(
-                weights[max_index] <= e_max * weights[min_index],
-                "z_ratio_hfl_max"
-            )
-        case _:
-            raise ValueError('Invalid z ratio mode')
-
-    # >>> SMAA <<<
-    if launch_smaa:
-        match ratio_mode:
-            case 'interval-successive':
-                for rank in range(1, cards_arrangement['rank'].max()):
-                    curr_rank = rank_groups[rank][0]
-                    next_rank = rank_groups[rank + 1][0]
-
-                    z_value_sample = np.random.uniform(z_value[f'zmin_{rank}'], z_value[f'zmax_{rank}'])
-                    model.addConstr(
-                        weights[next_rank] == z_value_sample * weights[curr_rank],
-                        f"z_ratio_constraint_smaa_{rank}"
-                    )
-            case 'interval-total':
-                z_value_sample = np.random.uniform(z_value['zmin'], z_value['zmax'])
+        elif ratio_mode == 'linear-spacing':
+            bar_sum_sample = _sample_bar_sum() if '_sample_bar_sum' in locals() else default_bar_sum
+            if e0_values_pb:
+                e0_support = np.array(list(e0_values_pb.keys()), dtype=float)
+                e0_probs = np.array(list(e0_values_pb.values()), dtype=float)
+                e0_value_sample = np.random.choice(e0_support, p=e0_probs)
+                z_value_sample = (bar_sum_sample + (e0_value_sample + 1.0)) / (e0_value_sample + 1.0)
                 model.addConstr(
                     weights[max_index] == z_value_sample * weights[min_index],
                     "z_ratio_constraint_smaa"
                 )
-            case 'probability-cloud':
-                z_value_sample = np.random.uniform(min(z_values_pb.keys()), max(z_values_pb.keys()))
+            elif e0_interval_bounds is not None:
+                e0_low, e0_high = e0_interval_bounds
+                e0_value_sample = np.random.uniform(e0_low, e0_high)
+                z_value_sample = (bar_sum_sample + (e0_value_sample + 1.0)) / (e0_value_sample + 1.0)
                 model.addConstr(
                     weights[max_index] == z_value_sample * weights[min_index],
                     "z_ratio_constraint_smaa"
                 )
-            case 'hfl-ratio-interval':
-                if isinstance(z_value, dict):
-                    e_min_term = int(z_value.get('emin', z_value.get('zmin', 1)))
-                    e_max_term = int(z_value.get('emax', z_value.get('zmax', e_min_term)))
-                else:
-                    e_min_term = int(float(z_value))
-                    e_max_term = int(float(z_value))
-
-                if e_max_term < e_min_term:
-                    raise ValueError('Invalid HFL global ratio interval: e_min > e_max.')
-                e_min = _map_hfl_z_term(e_min_term)
-                e_max = _map_hfl_z_term(e_max_term)
-                e_value_sample = random.randint(e_min, e_max)
+            elif e0_exact is not None:
+                e0_value_sample = float(e0_exact)
+                z_value_sample = (bar_sum_sample + (e0_value_sample + 1.0)) / (e0_value_sample + 1.0)
                 model.addConstr(
-                    weights[max_index] == e_value_sample * weights[min_index],
+                    weights[max_index] == z_value_sample * weights[min_index],
                     "z_ratio_constraint_smaa"
                 )
-            case 'linear-spacing':
-                bar_sum_sample = _sample_bar_sum() if '_sample_bar_sum' in locals() else default_bar_sum
-                if e0_values_pb:
-                    e0_support = np.array(list(e0_values_pb.keys()), dtype=float)
-                    e0_probs = np.array(list(e0_values_pb.values()), dtype=float)
-                    e0_value_sample = np.random.choice(e0_support, p=e0_probs)
-                    z_value_sample = (bar_sum_sample + (e0_value_sample + 1.0)) / (e0_value_sample + 1.0)
-                    model.addConstr(
-                        weights[max_index] == z_value_sample * weights[min_index],
-                        "z_ratio_constraint_smaa"
-                    )
-                elif e0_interval_bounds is not None:
-                    e0_low, e0_high = e0_interval_bounds
-                    e0_value_sample = np.random.uniform(e0_low, e0_high)
-                    z_value_sample = (bar_sum_sample + (e0_value_sample + 1.0)) / (e0_value_sample + 1.0)
-                    model.addConstr(
-                        weights[max_index] == z_value_sample * weights[min_index],
-                        "z_ratio_constraint_smaa"
-                    )
-                elif e0_exact is not None:
-                    e0_value_sample = float(e0_exact)
-                    z_value_sample = (bar_sum_sample + (e0_value_sample + 1.0)) / (e0_value_sample + 1.0)
-                    model.addConstr(
-                        weights[max_index] == z_value_sample * weights[min_index],
-                        "z_ratio_constraint_smaa"
-                    )
 
     # 4. Add normalization constraint if required.
     # For SMAA-style fully-flexible sampling we usually skip normalization to keep model generation broad.
@@ -3815,12 +4253,12 @@ def calc_srf_rand_samples(cards_arrangement,
                           conditional_gap_milp=False,
                           dynamic_unit_weight=False):
     """
-    Generates random samples of criteria weights using repeated solves on a free MILP solver.
+    Generates feasible samples of criteria weights for variability analysis.
 
-    Instead of solving the problem multiple times in parallel, this approach:
-    1. Builds the constraint model once
-    2. Uses repeated randomized objectives to generate multiple feasible solutions
-    3. Returns these as a DataFrame of weight samples
+    For continuous SRF models, the sampler uses hit-and-run to target the
+    uniform distribution over the feasible region. Mixed-integer cases fall back
+    to feasible-solution exploration when uniform polytope sampling is not
+    directly available.
 
     Args:
         cards_arrangement (pd.DataFrame): Card arrangement data
@@ -3841,6 +4279,14 @@ def calc_srf_rand_samples(cards_arrangement,
     """
 
     results = []
+    update_calculation_progress(
+        stage='sampling',
+        message='Uniformly sampling feasible solutions...',
+        current=0,
+        total=n_samples,
+        active=True,
+        done=False
+    )
 
     use_zero_dynamic_hit_and_run = bool(
         dynamic_unit_weight
@@ -3863,6 +4309,55 @@ def calc_srf_rand_samples(cards_arrangement,
         if isinstance(hitrun_samples, pd.DataFrame) and not hitrun_samples.empty:
             hitrun_samples.rename(columns=cards_arrangement['name']).to_json(
                 str(SRF_SAMPLES_PATH), orient='records'
+            )
+            update_calculation_progress(
+                stage='sampling',
+                message='Uniformly sampling feasible solutions...',
+                current=n_samples,
+                total=n_samples,
+                active=True,
+                done=False
+            )
+            return hitrun_samples, calc_asi(hitrun_samples)
+
+    base_model = None
+    base_weights = None
+    base_criteria_cards = None
+    base_delta = None
+    if normalized:
+        base_model, base_weights, _, base_criteria_cards, base_delta = _build_srf_model(
+            cards_arrangement,
+            z_value,
+            e_value,
+            comp_rule_within,
+            comp_rule_successive,
+            ratio_mode,
+            normalized,
+            extra_cond,
+            min_delta,
+            launch_smaa=False,
+            conditional_gap_milp=conditional_gap_milp,
+            dynamic_unit_weight=dynamic_unit_weight
+        )
+        hitrun_samples = _try_hit_and_run_model_samples(
+            model=base_model,
+            weights=base_weights,
+            criteria_cards=base_criteria_cards,
+            n_samples=n_samples,
+            normalized=normalized,
+            progress_message='Uniformly sampling feasible solutions'
+        )
+        if isinstance(hitrun_samples, pd.DataFrame) and not hitrun_samples.empty:
+            hitrun_samples.rename(columns=cards_arrangement['name']).to_json(
+                str(SRF_SAMPLES_PATH), orient='records'
+            )
+            update_calculation_progress(
+                stage='sampling',
+                message='Uniformly sampling feasible solutions...',
+                current=n_samples,
+                total=n_samples,
+                active=True,
+                done=False
             )
             return hitrun_samples, calc_asi(hitrun_samples)
 
@@ -3916,23 +4411,38 @@ def calc_srf_rand_samples(cards_arrangement,
                 if signature not in seen_signatures:
                     seen_signatures.add(signature)
                     results.append(solution)
+                    if _should_emit_progress(len(results), n_samples):
+                        update_calculation_progress(
+                            stage='sampling',
+                            message='Sampling feasible solutions...',
+                            current=len(results),
+                            total=n_samples,
+                            active=True,
+                            done=False
+                        )
 
     # Fallback/top-up: if probabilistic draws are sparse, sample feasible points directly.
     if len(results) < n_samples:
-        model, weights, rank_groups, criteria_cards, delta = _build_srf_model(
-            cards_arrangement,
-            z_value,
-            e_value,
-            comp_rule_within,
-            comp_rule_successive,
-            ratio_mode,
-            normalized,
-            extra_cond,
-            min_delta,
-            launch_smaa=False,
-            conditional_gap_milp=conditional_gap_milp,
-            dynamic_unit_weight=dynamic_unit_weight
-        )
+        if base_model is None or base_weights is None or base_criteria_cards is None:
+            model, weights, rank_groups, criteria_cards, delta = _build_srf_model(
+                cards_arrangement,
+                z_value,
+                e_value,
+                comp_rule_within,
+                comp_rule_successive,
+                ratio_mode,
+                normalized,
+                extra_cond,
+                min_delta,
+                launch_smaa=False,
+                conditional_gap_milp=conditional_gap_milp,
+                dynamic_unit_weight=dynamic_unit_weight
+            )
+        else:
+            model = base_model
+            weights = base_weights
+            criteria_cards = base_criteria_cards
+            delta = base_delta
         aux_scale_vars = [
             var for var in getattr(model, '_vars', [])
             if isinstance(getattr(var, 'name', None), str)
@@ -3964,6 +4474,15 @@ def calc_srf_rand_samples(cards_arrangement,
                 if signature not in seen_signatures:
                     seen_signatures.add(signature)
                     results.append(solution)
+                    if _should_emit_progress(len(results), n_samples):
+                        update_calculation_progress(
+                            stage='sampling',
+                            message='Sampling feasible solutions...',
+                            current=len(results),
+                            total=n_samples,
+                            active=True,
+                            done=False
+                        )
 
     # Interior-point enrichment for belief-degree and HFL:
     # LP-based sampling tends to return many vertices; mix feasible solutions to
@@ -3991,6 +4510,15 @@ def calc_srf_rand_samples(cards_arrangement,
             keep_base = max(0, n_samples - len(mixed_results))
             results = mixed_results + base_results[:keep_base]
             results = results[:n_samples]
+            if _should_emit_progress(len(results), n_samples):
+                update_calculation_progress(
+                    stage='sampling',
+                    message='Refining interior samples...',
+                    current=len(results),
+                    total=n_samples,
+                    active=True,
+                    done=False
+                )
 
     # Final densification: if still sparse, keep adding interior convex combinations.
     seen_signatures = {_solution_signature(solution) for solution in results}
@@ -4009,11 +4537,30 @@ def calc_srf_rand_samples(cards_arrangement,
             if signature not in seen_signatures:
                 seen_signatures.add(signature)
                 results.append(solution)
+                if _should_emit_progress(len(results), n_samples):
+                    update_calculation_progress(
+                        stage='sampling',
+                        message='Refining interior samples...',
+                        current=len(results),
+                        total=n_samples,
+                        active=True,
+                        done=False
+                    )
 
     # Convert to DataFrame and export into a JSON file
     srf_samples = pd.DataFrame(results)
+    srf_samples.index = [f'sample_{idx + 1}' for idx in range(len(srf_samples))]
     srf_samples.rename(columns=cards_arrangement['name']).to_json(
         str(SRF_SAMPLES_PATH), orient='records'
+    )
+
+    update_calculation_progress(
+        stage='sampling',
+        message='Sampling feasible solutions...',
+        current=n_samples if n_samples else len(srf_samples),
+        total=n_samples if n_samples else max(1, len(srf_samples)),
+        active=True,
+        done=False
     )
 
     # Calculate the ASI value
@@ -4082,8 +4629,17 @@ def calc_srf_vertices(cards_arrangement,
         and (var.name.startswith('delta_') or var.name.startswith('hfl_t_'))
     ]
 
+    update_calculation_progress(
+        stage='extreme',
+        message='Exploring extreme scenarios...',
+        current=0,
+        total=n_samples,
+        active=True,
+        done=False
+    )
+
     results = []
-    for _ in range(n_samples):
+    for iteration in range(1, n_samples + 1):
         # For finding diverse solutions, add a small random perturbation to the objective function
         # This helps the solver explore different parts of the feasible region
         for idx in weights:
@@ -4101,6 +4657,16 @@ def calc_srf_vertices(cards_arrangement,
             # Extract and record weights for this solution
             solution = {idx: weights[idx].X for idx in criteria_cards.index}
             results.append(solution)
+
+        if _should_emit_progress(iteration, n_samples):
+            update_calculation_progress(
+                stage='extreme',
+                message='Exploring extreme scenarios...',
+                current=iteration,
+                total=n_samples,
+                active=True,
+                done=False
+            )
 
     # Convert to DataFrame and remove the duplicates
     srf_vertices = pd.DataFrame(results)
@@ -4167,27 +4733,60 @@ def calc_srf_min_max(cards_arrangement,
     )
 
     results = []
+    scenario_labels = []
+    total_runs = 2 * len(weights)
+    progress_step = 0
+    update_calculation_progress(
+        stage='extreme',
+        message='Computing extreme scenario bounds...',
+        current=0,
+        total=total_runs,
+        active=True,
+        done=False
+    )
     for idx in weights:
         # Solve for a minimum criterion weight
         model.setObjective(weights[idx], GRB.MINIMIZE)
         model.optimize()
+        progress_step += 1
 
         if model.status == GRB.OPTIMAL:
             # Extract and record weights for this solution
             solution = {idx: weights[idx].X for idx in criteria_cards.index}
             results.append(solution)
+            scenario_labels.append(f"{criteria_cards.loc[idx, 'name']} minimized")
+        if _should_emit_progress(progress_step, total_runs):
+            update_calculation_progress(
+                stage='extreme',
+                message='Computing extreme scenario bounds...',
+                current=progress_step,
+                total=total_runs,
+                active=True,
+                done=False
+            )
 
         # Solve for a maximum criterion weight
         model.setObjective(weights[idx], GRB.MAXIMIZE)
         model.optimize()
+        progress_step += 1
 
         if model.status == GRB.OPTIMAL:
             # Extract and record weights for this solution
             solution = {idx: weights[idx].X for idx in criteria_cards.index}
             results.append(solution)
+            scenario_labels.append(f"{criteria_cards.loc[idx, 'name']} maximized")
+        if _should_emit_progress(progress_step, total_runs):
+            update_calculation_progress(
+                stage='extreme',
+                message='Computing extreme scenario bounds...',
+                current=progress_step,
+                total=total_runs,
+                active=True,
+                done=False
+            )
 
     # Convert to DataFrame
-    srf_min_max = pd.DataFrame(results)
+    srf_min_max = pd.DataFrame(results, index=scenario_labels[:len(results)])
 
     # Calculate the ASI value
     asi_srf_min_max = calc_asi(srf_min_max)

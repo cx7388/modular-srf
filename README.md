@@ -8,6 +8,8 @@ This browser-based application replicates the revised Simos' method for weight e
 
 > Figueira, J., & Roy, B. (2002). Determining the weights of criteria in the ELECTRE type methods with a revised Simos' procedure. *European Journal of Operational Research, 139*(2), 317-326. [doi:10.1016/s0377-2217(01)00370-8](https://www.sciencedirect.com/science/article/pii/S0377221701003708)
 
+It supports the predefined SRF family together with the standalone Modular SRF framework, including variability analysis with feasible-region sampling, extreme-scenario exploration, ASI diagnostics, PCA maps, and XLSX export of detailed variability tables.
+
 ## Installation and Usage
 1. **Create a virtual environment** and install the dependencies:
     ```bash
@@ -35,11 +37,17 @@ This browser-based application replicates the revised Simos' method for weight e
 - `simos_method/static/js/cardUtils.js`: drag-and-drop card logic
 - `simos_method/static/js/uiUtils.js`: dynamic method inputs and modular questionnaire behavior
 - `simos_method/static/js/backend.js`: frontend payload assembly and `/calculate` request handling
-- `simos_method/static/js/results.js`: result table and Plotly visualizations
+- `simos_method/static/js/results.js`: result table, sampling distribution, extreme-scenario heatmap, and PCA visualizations
 
 ## Development Notes
 - The frontend serializes method-specific inputs in `simos_method/static/js/backend.js`, and the backend normalizes them again in `simos_method/__init__.py`. Keep both sides aligned when changing payload shapes.
 - Core optimization behavior is centralized in `simos_method/static/python/srf_methods.py`; most method additions or constraint changes eventually pass through that file.
-- Runtime plot data is written to `simos_method/static/data/srf_samples.json` and `simos_method/static/data/pca_output.json`.
+- Variability runs use a configurable sampling count (default `200`). Continuous models use hit-and-run sampling targeting the uniform distribution over the feasible region.
+- Runtime plot/export/progress data is written to:
+  - `simos_method/static/data/srf_samples.json`
+  - `simos_method/static/data/srf_extreme_scenarios.json`
+  - `simos_method/static/data/pca_output.json`
+  - `simos_method/static/data/srf_export_payload.json`
+  - `simos_method/static/data/calculation_progress.json`
 
 

@@ -42,7 +42,7 @@ Use this tool when you need to:
 - **Interactive Deck-of-Cards Interface**: Arrange criteria cards visually to express preferences
 - **Multiple SRF Configurations**: Choose from 7 predefined SRF methods plus the standalone Modular SRF framework
 - **Real-Time Calculations**: Immediate weight computation and normalization
-- **Robustness Analysis**: ASI values, distribution plots, and PCA visualizations
+- **Robustness Analysis**: ASI diagnostics, sampling distributions, extreme-scenario heatmaps, and PCA visualizations
 - **Import/Export**: Save and load configurations in JSON format
 - **Export Results**: Download results to Excel (XLSX) format
 - **No Installation Required**: Runs entirely in your web browser
@@ -146,8 +146,9 @@ Let's perform a simple weight elicitation:
 2. Drag criterion cards to the drop zone and arrange them from left (most important) to right (least important)
 3. Insert blank cards between criteria to indicate preference intensity
 4. Set the **z-value** (ratio between most and least important criteria)
-5. Click **"Calculate"** to compute the weights
-6. Review the results displayed below
+5. If you are using a variability-oriented method, set the **sampling count** if needed (default: 200)
+6. Click **"Calculate"** to compute the weights
+7. Review the results displayed below
 
 ---
 
@@ -195,6 +196,7 @@ Select from 7 predefined SRF methods and the standalone Modular SRF framework:
 - **z-value**: Global ratio between most and least important groups
 - **e0-value** (SRF-II only): Blank cards to hypothetical zero criterion
 - **w-value**: Decimal precision for final weights
+- **Sampling count** (variability-oriented methods): Number of feasible samples used for the sampling distribution and PCA views; default 200
 
 #### Action Buttons
 - **Calculate**: Compute the criteria weights
@@ -204,6 +206,7 @@ Select from 7 predefined SRF methods and the standalone Modular SRF framework:
 - Weight tables
 - ASI (Average Stability Index) values
 - Distribution plots (box plots)
+- Extreme scenario heatmap
 - PCA (Principal Component Analysis) visualizations
 
 ---
@@ -275,6 +278,12 @@ This means:
 - **Range**: 0 to 2
 - **Example**: w=2 gives weights like 0.23, w=1 gives 0.2, w=0 gives 0
 
+#### Sampling Count (Variability-Oriented Methods)
+- **Definition**: Number of feasible solutions used to build the sampling distribution and PCA views
+- **Default**: 200
+- **Range**: 1 to 20,000
+- **Note**: For continuous SRF models, the sampler targets the uniform distribution over the feasible region
+
 ### 5.5 Calculating Weights
 
 1. Verify your card arrangement is complete
@@ -335,12 +344,14 @@ This means:
 **Advantages**:
 - Shows variability in compatible weights
 - ASI values for robustness assessment
-- Distribution visualizations
+- Sampling distributions and PCA views
+- Extreme-scenario heatmap for criterion-wise minima and maxima
 
 **Output Includes**:
 - Normalized weights
-- ASI (Average Stability Index) values
-- Box plots showing weight distributions
+- ASI (Average Stability Index) value based on extreme scenarios
+- Box plots showing sampled feasible weights
+- Extreme scenario heatmap
 - PCA plots (when applicable)
 
 ### 6.4 Assessment Through Prioritization (WAP)
@@ -448,6 +459,8 @@ After clicking "Calculate", the tool displays the computed criterion weights. Th
 
 **ASI (Average Stability Index)**: A single summary value describing how stable the compatible weight solutions are across the feasible region.
 
+For variability-oriented runs, the displayed ASI is computed from the **extreme scenario matrix** rather than from the sampled cloud. In other words, it summarizes how much criterion weights change across the criterion-wise minimum and maximum feasible solutions.
+
 **Interpretation**:
 - Values between 0 and 1
 - Higher ASI = more robust/stable result
@@ -456,32 +469,52 @@ After clicking "Calculate", the tool displays the computed criterion weights. Th
 
 ### 7.3 Distribution Plots (Box Plots)
 
-For robust methods, you'll see box plots showing:
-- **Box**: Interquartile range (IQR) - middle 50% of samples
-- **Line in Box**: Median weight
-- **Whiskers**: Full range of compatible weights
-- **Outliers**: (if any) unusual weight values
+For variability-oriented methods, the sampling distribution figure shows:
+- **Box**: Interquartile range (IQR) - middle 50% of sampled weights
+- **Line in Box**: Median sampled weight
+- **Whiskers**: Sampled range for that criterion
+- **Overlay line**: The displayed SRF weight vector from the results table
 
 **Interpretation**:
 - Wide box = high variability/uncertainty
 - Narrow box = stable/robust weight
 - Compare widths to assess relative robustness
 
-### 7.4 PCA Plots
+**How the samples are generated**:
+- In continuous SRF models, the tool uses hit-and-run sampling targeting a **uniform distribution** over the feasible region
+- If a run includes discrete logical constraints, the tool falls back to feasible-solution exploration rather than continuous polytope sampling
+
+### 7.4 Extreme Scenario Heatmap
+
+The extreme scenario heatmap summarizes the boundary solutions used for robustness interpretation.
+
+**Elements**:
+- **Rows**: Extreme scenarios obtained by minimizing or maximizing one criterion at a time
+- **Columns**: Criteria
+- **Cell color/value**: Weight of a criterion in that extreme scenario
+
+**Interpretation**:
+- Dark/light shifts show which criteria move most across the feasible region
+- Similar rows indicate that several extrema lead to comparable weight patterns
+- Strong contrasts highlight criteria that are especially sensitive to the imposed preference constraints
+
+### 7.5 PCA Plots
 
 **PCA (Principal Component Analysis)**: 2D visualization of weight space
 
 **Elements**:
-- **Points**: Sample weight vectors
+- **Points**: Sampled feasible weight vectors
 - **Clusters**: Groups of similar weights
 - **Distribution**: Spread indicates robustness
+
+For continuous SRF models, the PCA cloud is built from the same uniformly sampled hit-and-run solutions used in the boxplot view.
 
 **Interpretation**:
 - Tight cluster = stable recommendations
 - Scattered points = high variability
 - Multiple clusters = potentially different preference scenarios
 
-### 7.5 Statistical Summaries
+### 7.6 Statistical Summaries
 
 Depending on the method, you may see additional statistics:
 - **Mean weights**: Average across samples
@@ -537,10 +570,11 @@ Depending on the method, you may see additional statistics:
 3. Default filename: `srf_results_[timestamp].xlsx`
 
 **What's Included**:
-- Sheet 1: Normalized weights table
-- Sheet 2: ASI values (if applicable)
-- Sheet 3: Weight distribution statistics (if applicable)
-- Sheet 4: Input configuration summary
+- Sheet 1: Criteria Weights
+- Sheet 2: Sampling Results (if variability analysis is active)
+- Sheet 3: Extreme Scenarios (if variability analysis is active)
+
+The additional variability sheets are omitted when no corresponding data is available.
 
 **File Format**: Microsoft Excel (.xlsx) format, compatible with Excel, LibreOffice, Google Sheets
 
@@ -575,14 +609,14 @@ Depending on the method, you may see additional statistics:
 - `simos_method/static/python/freeopt.py`: compatibility layer that maps the used subset of the `gurobipy` API to free solvers
 - `simos_method/static/js/uiUtils.js`: method-specific inputs and modular questionnaire behavior
 - `simos_method/static/js/backend.js`: browser-side payload serialization and POST `/calculate`
-- `simos_method/static/js/results.js`: results table plus boxplot/PCA rendering
+- `simos_method/static/js/results.js`: results table plus sampling distribution, extreme-scenario heatmap, and PCA rendering
 
 **Request flow**:
 1. The browser collects the card arrangement and method-specific inputs.
 2. `backend.js` sends them to the Flask `/calculate` endpoint.
 3. `simos_method/__init__.py` validates and reshapes the payload into the format expected by the solver layer.
 4. `srf_methods.py` runs the requested SRF workflow and writes any plot-support files.
-5. The browser renders the returned table and loads the variability/PCA JSON files when needed.
+5. The browser renders the returned table and loads the variability/progress JSON files when needed.
 
 ### 11.2 Optimization Models
 
@@ -627,8 +661,11 @@ The tool formulates **linear programming (LP)** problems:
 **Configuration Files**:
 - Location: `simos_method/static/data/`
 - `simos_instructions.json`: Method descriptions
-- `srf_samples.json`: Cached random samples (for robust methods)
+- `srf_samples.json`: Cached sampling results
+- `srf_extreme_scenarios.json`: Cached labeled extreme scenarios
 - `pca_output.json`: Cached PCA results
+- `srf_export_payload.json`: Cached XLSX export payload for variability details
+- `calculation_progress.json`: Cached progress payload for the active calculation
 
 **File Formats**:
 - Input/Output: JSON
@@ -639,7 +676,7 @@ The tool formulates **linear programming (LP)** problems:
 - All data lost on page refresh unless exported
 
 **Runtime behavior**:
-- `srf_samples.json` and `pca_output.json` are recreated during each calculation
+- `srf_samples.json`, `srf_extreme_scenarios.json`, `pca_output.json`, `srf_export_payload.json`, and `calculation_progress.json` are recreated during each calculation
 - The backend writes placeholder JSON before solving so the frontend does not hit temporary 404 errors while plots are loading
 
 ### 11.5 Performance Considerations
@@ -651,9 +688,11 @@ The tool formulates **linear programming (LP)** problems:
 - 100 criteria: 30-60 seconds (not recommended)
 
 **Robust Methods**:
-- Generate 10,000 random samples by default
+- Use a default sampling count of 200, configurable in the UI
+- For continuous models, sampling targets the uniform distribution over the feasible region via hit-and-run
+- Mixed-integer logical variants fall back to feasible-solution exploration
 - Adds 5-30 seconds depending on criteria count
-- Results cached to disk for reuse
+- Variability outputs are written to JSON files for frontend loading and XLSX export
 
 **Optimization**:
 - Warm start solver at launch
@@ -769,7 +808,7 @@ This tool was developed as part of research conducted at the Laboratory for Ener
 
 ## Appendix A: Glossary
 
-**ASI (Average Stability Index)**: A scalar indicator describing how stable the compatible weight solutions are across the feasible region.
+**ASI (Average Stability Index)**: A scalar indicator describing how stable the compatible weight solutions are across the feasible region; in the interface it is reported from the extreme-scenario matrix.
 
 **Blank Card**: A white card used to express preference intensity between criteria.
 
@@ -815,7 +854,7 @@ This tool was developed as part of research conducted at the Laboratory for Ener
 4. **Add Criteria**: Edit and drag criterion cards
 5. **Rank**: Arrange left (important) to right (less important)
 6. **Intensity**: Insert blank cards between groups
-7. **Parameters**: Set z, e0, and w values
+7. **Parameters**: Set z, e0, w, and sampling count when variability analysis is active
 8. **Calculate**: Click calculate button
 9. **Review**: Check weights and diagnostics
 10. **Export**: Save configuration or results
@@ -836,6 +875,7 @@ This tool was developed as part of research conducted at the Laboratory for Ener
 | z-value | 6.5 | 1.5-1000 | Global ratio (most/least important) |
 | e0-value | 4 | 0-999 | Distance to zero criterion (SRF-II) |
 | w-value | 1 | 0-2 | Decimal precision of final weights |
+| Sampling count | 200 | 1-20000 | Number of feasible samples used in variability figures |
 
 ### Common Patterns
 
@@ -853,7 +893,7 @@ This tool was developed as part of research conducted at the Laboratory for Ener
 
 **High Uncertainty**:
 - Use Robust/Imprecise methods
-- Review ASI and distributions
+- Review ASI, distributions, and extreme scenarios
 
 ---
 
@@ -866,7 +906,7 @@ A: Typically 5-15 criteria is manageable. Fewer than 5 may be too simple; more t
 A: Place them in the same column (ex aequo). They will receive exactly equal weights.
 
 **Q4: Should I use SRF or Robust SRF?**  
-A: Use SRF for a single weight vector. Use Robust SRF to explore variability and robustness.
+A: Use SRF for a single weight vector. Use Robust SRF when you want variability diagnostics such as sampling distributions, extreme scenarios, ASI, and PCA.
 
 **Q5: What z-value should I choose?**  
 A: Common values: 5-10. Higher values (15-20) indicate strong differentiation. Lower (2-4) indicate mild differences.
@@ -881,7 +921,7 @@ A: Use robust methods to explore multiple rankings, or use imprecise/belief-degr
 A: Yes, use the Export button to save configuration to JSON, then Import later to resume.
 
 **Q10: Why are my ASI values all very high or very low?**  
-A: Very high ASI (close to 1) indicates robust ranking; very low may indicate computational issues or high uncertainty.
+A: Very high ASI (close to 1) indicates that the extreme scenarios remain similar across criteria. Lower ASI means the compatible weights vary more strongly across those extreme solutions.
 
 **Q11: Can I use fractional blank cards?**  
 A: No, only whole blank cards. Use intervals (Imprecise SRF) for fractional differentiation.

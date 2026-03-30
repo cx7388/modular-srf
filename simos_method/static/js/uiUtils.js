@@ -229,7 +229,7 @@ function getModularDefaultOptions() {
         probability: 'no',             // no | yes
         output_type: 'single',         // single | variability
         unit_weight: 'fixed',          // fixed | dynamic
-        variability_method: 'sampling' // extreme | sampling
+        variability_method: 'sampling' // sampling + extreme scenarios
     };
 }
 
@@ -286,6 +286,177 @@ function collectModularOptionsFromDom() {
         options.z_format = 'interval';
     }
     return options;
+}
+
+
+const MAX_SAMPLING_INPUT_SIZE = 20000;
+
+
+function getCriterionCardCountFromDom() {
+    return Math.max(1, document.querySelectorAll('.drop-zone .card.criterion').length);
+}
+
+
+function usesSamplingForCurrentConfiguration(selectedMethod = null, modularOptions = null, methodForInputs = null) {
+    const method = selectedMethod || document.getElementById("srf_method")?.value;
+    const options = modularOptions || (method === 'modular_srf' ? collectModularOptionsFromDom() : null);
+    const profile = methodForInputs || (method === 'modular_srf'
+        ? deriveModularInputProfile(options)
+        : method);
+
+    if (method === 'modular_srf') {
+        return Boolean(
+            options
+            && options.output_type === 'variability'
+        );
+    }
+
+    return new Set([
+        'robust_srf',
+        'wap',
+        'imprecise_srf',
+        'belief_degree_imprecise_srf',
+        'hfl_srf'
+    ]).has(profile);
+}
+
+
+function getDefaultSamplingSizeForConfiguration(selectedMethod = null, modularOptions = null, methodForInputs = null) {
+    const method = selectedMethod || document.getElementById("srf_method")?.value;
+    const options = modularOptions || (method === 'modular_srf' ? collectModularOptionsFromDom() : null);
+    const profile = methodForInputs || (method === 'modular_srf'
+        ? deriveModularInputProfile(options)
+        : method);
+
+    if (method === 'modular_srf' && options) {
+        return options.output_type === 'variability' ? 200 : null;
+    }
+
+    return new Set([
+        'robust_srf',
+        'wap',
+        'imprecise_srf',
+        'belief_degree_imprecise_srf',
+        'hfl_srf'
+    ]).has(profile) ? 200 : null;
+}
+
+
+function ensureSamplingSizePanel() {
+    const container = document.getElementById("additional-inputs");
+    if (!container) return null;
+
+    let panel = document.getElementById('sampling-size-query');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'sampling-size-query';
+        panel.style.display = 'none';
+        panel.style.justifyContent = 'space-between';
+        panel.style.alignItems = 'center';
+        panel.style.gap = '1rem';
+        panel.style.marginTop = '0.6rem';
+        panel.innerHTML = `
+            <label for="sampling-size-input">
+                How many feasible samples should be generated for the variability analysis?
+                <div style="font-size:0.78rem; color:#6f7784; margin-top:0.2rem;">
+                    Dynamic analysis always includes both sampling and extreme scenarios. This value controls the sampling run only.
+                </div>
+            </label>
+            <input type="number" id="sampling-size-input" name="sampling-size-input"
+                   class="labelmaxmin form-control"
+                   min="1" max="${MAX_SAMPLING_INPUT_SIZE}" step="1" value="200"
+                   placeholder="Samples">
+        `;
+
+        const input = panel.querySelector('#sampling-size-input');
+        input?.addEventListener('input', () => {
+            input.dataset.userEdited = 'true';
+            validateMethodInputsAndToggleRun();
+        });
+
+        const wQuery = document.getElementById('w_value_query');
+        if (wQuery?.parentNode) {
+            wQuery.insertAdjacentElement('afterend', panel);
+        } else {
+            container.appendChild(panel);
+        }
+    }
+
+    return panel;
+}
+
+
+function updateSamplingSizeVisibility() {
+    const selectedMethod = document.getElementById("srf_method")?.value;
+    const modularOptions = selectedMethod === 'modular_srf' ? collectModularOptionsFromDom() : null;
+    const methodForInputs = selectedMethod === 'modular_srf'
+        ? deriveModularInputProfile(modularOptions)
+        : selectedMethod;
+    const panel = ensureSamplingSizePanel();
+    const input = document.getElementById('sampling-size-input');
+    if (!panel || !input) return;
+
+    const shouldShow = usesSamplingForCurrentConfiguration(selectedMethod, modularOptions, methodForInputs);
+    panel.style.display = shouldShow ? 'flex' : 'none';
+    if (!shouldShow) {
+        return;
+    }
+
+    const defaultValue = getDefaultSamplingSizeForConfiguration(selectedMethod, modularOptions, methodForInputs);
+    const modeKey = [
+        selectedMethod || '',
+        methodForInputs || '',
+        modularOptions?.output_type || ''
+    ].join('|');
+
+    if (input.dataset.modeKey !== modeKey) {
+        input.value = String(defaultValue ?? 200);
+        input.dataset.modeKey = modeKey;
+        input.dataset.userEdited = 'false';
+        return;
+    }
+
+    if (!input.value || Number.parseInt(input.value, 10) <= 0) {
+        input.value = String(defaultValue ?? 200);
+    }
+}
+
+
+function collectSamplingSizeFromDom() {
+    const panel = document.getElementById('sampling-size-query');
+    const input = document.getElementById('sampling-size-input');
+    if (!panel || !input || panel.style.display === 'none') {
+        return null;
+    }
+
+    const parsedValue = parseInt(input.value, 10);
+    if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+        return null;
+    }
+    return Math.min(parsedValue, MAX_SAMPLING_INPUT_SIZE);
+}
+
+
+function validateSamplingSizeInput() {
+    const panel = document.getElementById('sampling-size-query');
+    const input = document.getElementById('sampling-size-input');
+    if (!panel || !input || panel.style.display === 'none') {
+        return {
+            valid: true,
+            summaryHtml: ''
+        };
+    }
+
+    const parsedValue = parseInt(input.value, 10);
+    const valid = Number.isInteger(parsedValue)
+        && parsedValue >= 1
+        && parsedValue <= MAX_SAMPLING_INPUT_SIZE;
+
+    const summaryHtml = valid
+        ? `<div style="margin:0.35rem 0 0.15rem;">Sampling count: ${parsedValue} feasible solutions requested.</div>`
+        : `<div style="margin:0.35rem 0 0.15rem; color:#b54708;">Sampling count must be an integer between 1 and ${MAX_SAMPLING_INPUT_SIZE}.</div>`;
+
+    return {valid, summaryHtml};
 }
 
 
@@ -521,11 +692,11 @@ function ensureModularQuestionnairePanel() {
                 </div>
 
                 <div id="mod-row-q13" style="display:none; gap:0.45rem; align-items:center;">
-                    <label for="mod-q13-var-method" style="min-width:18rem;">Variability method</label>
-                    <select id="mod-q13-var-method" class="labelmaxmin form-control">
-                        <option value="sampling" selected>Sampling</option>
-                        <option value="extreme">Extreme scenarios</option>
+                    <label for="mod-q13-var-method" style="min-width:18rem;">Dynamic analysis outputs</label>
+                    <select id="mod-q13-var-method" class="labelmaxmin form-control" disabled>
+                        <option value="sampling" selected>Sampling + extreme scenarios</option>
                     </select>
+                    <span style="font-size:0.75rem; color:#6f7784;">Both outputs are always generated together.</span>
                 </div>
             </div>
         `;
@@ -1145,18 +1316,20 @@ function validateMethodInputsAndToggleRun() {
     if (!runButton) return;
     syncOptionalConstraintPanels();
     updateModularQuestionnaireVisibility();
+    updateSamplingSizeVisibility();
     const optionalState = validateOptionalConstraintsInputs();
+    const samplingState = validateSamplingSizeInput();
 
     if (selectedMethod === 'modular_srf') {
         const modularState = validateModularMethodInputs(modularOptions);
-        const isValid = modularState.valid && optionalState.valid;
+        const isValid = modularState.valid && optionalState.valid && samplingState.valid;
         const modularSummary = `
             <div style="font-size:0.8rem; color:#6f7784; margin-bottom:0.35rem;">
                 Procedure=${modularOptions?.procedure || '-'}, distance=${modularOptions?.distance_type || '-'},
                 z=${modularOptions?.z_type || '-'}, output=${modularOptions?.output_type || '-'}.
             </div>
         `;
-        setMethodSummary(`${modularSummary}${modularState.summaryHtml}${optionalState.summaryHtml}`, !isValid);
+        setMethodSummary(`${modularSummary}${modularState.summaryHtml}${samplingState.summaryHtml}${optionalState.summaryHtml}`, !isValid);
         runButton.disabled = !isValid;
         runButton.style.opacity = isValid ? '1' : '0.6';
         return;
@@ -1164,11 +1337,11 @@ function validateMethodInputsAndToggleRun() {
 
     if (methodForInputs === 'belief_degree_imprecise_srf') {
         const state = validateBeliefMethodInputs();
-        const isValid = state.valid && optionalState.valid;
+        const isValid = state.valid && optionalState.valid && samplingState.valid;
         const modularSummary = selectedMethod === 'modular_srf'
             ? `<div style="font-weight:600; margin-bottom:0.25rem;">Modular profile: ${methodForInputs}</div>`
             : '';
-        setMethodSummary(`${modularSummary}${state.summaryHtml}${optionalState.summaryHtml}`, !isValid);
+        setMethodSummary(`${modularSummary}${state.summaryHtml}${samplingState.summaryHtml}${optionalState.summaryHtml}`, !isValid);
         runButton.disabled = !isValid;
         runButton.style.opacity = isValid ? '1' : '0.6';
         return;
@@ -1176,17 +1349,17 @@ function validateMethodInputsAndToggleRun() {
 
     if (methodForInputs === 'hfl_srf') {
         const state = validateHflMethodInputs();
-        const isValid = state.valid && optionalState.valid;
+        const isValid = state.valid && optionalState.valid && samplingState.valid;
         const modularSummary = selectedMethod === 'modular_srf'
             ? `<div style="font-weight:600; margin-bottom:0.25rem;">Modular profile: ${methodForInputs}</div>`
             : '';
-        setMethodSummary(`${modularSummary}${state.summaryHtml}${optionalState.summaryHtml}`, !isValid);
+        setMethodSummary(`${modularSummary}${state.summaryHtml}${samplingState.summaryHtml}${optionalState.summaryHtml}`, !isValid);
         runButton.disabled = !isValid;
         runButton.style.opacity = isValid ? '1' : '0.6';
         return;
     }
 
-    if (selectedMethod === 'modular_srf' || optionalState.anyEnabled || !optionalState.valid) {
+    if (selectedMethod === 'modular_srf' || optionalState.anyEnabled || !optionalState.valid || samplingState.summaryHtml) {
         const modularSummary = selectedMethod === 'modular_srf'
             ? `
                 <div style="font-weight:600; margin-bottom:0.25rem;">Modular profile: ${methodForInputs}</div>
@@ -1196,12 +1369,12 @@ function validateMethodInputsAndToggleRun() {
                 </div>
             `
             : '';
-        setMethodSummary(`${modularSummary}${optionalState.summaryHtml}`, !optionalState.valid);
+        setMethodSummary(`${modularSummary}${samplingState.summaryHtml}${optionalState.summaryHtml}`, !(optionalState.valid && samplingState.valid));
     } else {
         hideMethodSummary();
     }
-    runButton.disabled = !optionalState.valid;
-    runButton.style.opacity = optionalState.valid ? '1' : '0.6';
+    runButton.disabled = !(optionalState.valid && samplingState.valid);
+    runButton.style.opacity = optionalState.valid && samplingState.valid ? '1' : '0.6';
 }
 
 
@@ -1270,6 +1443,7 @@ function updateGridState() {
     ensureModularQuestionnairePanel()
     renderZInputs()
     renderEInputs()
+    updateSamplingSizeVisibility()
     ensureOptionalConstraintsPanel()
     validateMethodInputsAndToggleRun()
 }

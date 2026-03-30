@@ -45,7 +45,10 @@ app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 DATA_DIR = Path(__file__).resolve().parent / 'static' / 'data'
 SRF_SAMPLES_PATH = DATA_DIR / 'srf_samples.json'
+SRF_EXTREME_SCENARIOS_PATH = DATA_DIR / 'srf_extreme_scenarios.json'
 PCA_OUTPUT_PATH = DATA_DIR / 'pca_output.json'
+EXPORT_PAYLOAD_PATH = DATA_DIR / 'srf_export_payload.json'
+CALCULATION_PROGRESS_PATH = DATA_DIR / 'calculation_progress.json'
 
 # Warm up solver backend once at startup to reduce first optimization latency.
 if str(os.getenv('SRF_SKIP_SOLVER_WARMUP', '0')).strip().lower() not in {'1', 'true', 'yes'}:
@@ -211,6 +214,30 @@ def data_pca_output():
     return _serve_json_or_default(PCA_OUTPUT_PATH, '{}')
 
 
+@app.route('/data/srf_extreme_scenarios.json')
+@app.route('/static/data/srf_extreme_scenarios.json')
+def data_srf_extreme_scenarios():
+    """Serves labeled extreme-scenario solutions with a safe fallback payload."""
+    return _serve_json_or_default(SRF_EXTREME_SCENARIOS_PATH, '[]')
+
+
+@app.route('/data/srf_export_payload.json')
+@app.route('/static/data/srf_export_payload.json')
+def data_srf_export_payload():
+    """Serves the detailed variability payload used by XLSX export."""
+    return _serve_json_or_default(EXPORT_PAYLOAD_PATH, '{}')
+
+
+@app.route('/data/calculation_progress.json')
+@app.route('/static/data/calculation_progress.json')
+def data_calculation_progress():
+    """Serves progress updates for the currently running calculation."""
+    return _serve_json_or_default(
+        CALCULATION_PROGRESS_PATH,
+        '{"active":false,"done":false,"status":"idle","stage":"idle","message":"Idle","current":0,"total":0,"percent":0}'
+    )
+
+
 @app.route('/debug/hfl-config')
 def debug_hfl_config():
     """Small runtime probe to verify which HFL mapper/ranges are loaded by the running server."""
@@ -252,12 +279,15 @@ def calculate():
 
     # Reset output files using absolute paths so static fetches are robust to cwd differences.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for json_path in [SRF_SAMPLES_PATH, PCA_OUTPUT_PATH]:
+    for json_path in [SRF_SAMPLES_PATH, SRF_EXTREME_SCENARIOS_PATH, PCA_OUTPUT_PATH, EXPORT_PAYLOAD_PATH]:
         if json_path.exists():
             json_path.unlink()
     # Keep placeholder files to avoid transient 404s on frontend fetch.
     SRF_SAMPLES_PATH.write_text('[]', encoding='utf-8')
+    SRF_EXTREME_SCENARIOS_PATH.write_text('[]', encoding='utf-8')
     PCA_OUTPUT_PATH.write_text('{}', encoding='utf-8')
+    EXPORT_PAYLOAD_PATH.write_text('{}', encoding='utf-8')
+    srf_methods_module.reset_calculation_progress('Preparing SRF calculation...')
 
     try:
         # Convert user inputs into appropriate data types and structures
@@ -294,6 +324,7 @@ def calculate():
                 min_delta = 1.0
         except (TypeError, ValueError):
             min_delta = 1.0
+        sampling_size = data.get('samplingSize', None)
 
         # z/e payloads arrive in different shapes depending on the selected method.
         # Normalize them here into the scalar/dict structures expected downstream.
@@ -419,7 +450,8 @@ def calculate():
                                         modular_options=modular_options,
                                         modular_profile=modular_profile,
                                         min_delta=min_delta,
-                                        extra_constraints=optional_constraints)
+                                        extra_constraints=optional_constraints,
+                                        sample_size=sampling_size)
         except Exception as calc_exc:
             calc_message = str(calc_exc)
             is_solver_infeasibility = (
@@ -440,6 +472,10 @@ def calculate():
                         modular_profile=modular_profile
                     )
                     if report.get('detected'):
+                        srf_methods_module.finish_calculation_progress(
+                            'Calculation finished with inconsistency recommendations.',
+                            status='completed'
+                        )
                         return jsonify({
                             'crit_weights': '[]',
                             'asi_value': None,
@@ -453,11 +489,16 @@ def calculate():
         # Reorder and label columns so the frontend can render one consistent table.
         simos_calc_results = postprocess_dropzone(simos_calc_results)
 
+        srf_methods_module.finish_calculation_progress('Calculation complete.', status='completed')
         return jsonify({
             'crit_weights': simos_calc_results.to_json(orient='records'),
             'asi_value': asi_value,
         })
     except Exception as exc:
+        srf_methods_module.finish_calculation_progress(
+            f'Calculation failed: {exc}',
+            status='error'
+        )
         return jsonify({'error': str(exc)}), 400
 
 
