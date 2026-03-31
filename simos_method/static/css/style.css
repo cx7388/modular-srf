@@ -564,6 +564,11 @@ main li {
     position: relative;
 }
 
+.results-figure-header > :first-child {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 .results-figure-title {
     margin: 0;
     font-size: 1.05rem;
@@ -575,7 +580,7 @@ main li {
     font-size: 0.86rem;
     line-height: 1.45;
     color: #5a6372;
-    max-width: 46rem;
+    max-width: none;
 }
 
 .info-popover {
