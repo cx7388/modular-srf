@@ -229,7 +229,7 @@ function getModularDefaultOptions() {
         probability: 'no',             // no | yes
         output_type: 'single',         // single | variability
         unit_weight: 'fixed',          // fixed | dynamic
-        variability_method: 'sampling' // sampling + extreme scenarios
+        variability_method: 'sampling' // internal default: both outputs are generated together
     };
 }
 
@@ -252,7 +252,7 @@ function collectModularOptionsFromDom() {
         probability: valueOrDefault('mod-q8-prob', defaults.probability),
         output_type: valueOrDefault('mod-q11-output', defaults.output_type),
         unit_weight: valueOrDefault('mod-q12-unit', defaults.unit_weight),
-        variability_method: valueOrDefault('mod-q13-var-method', defaults.variability_method)
+        variability_method: defaults.variability_method
     };
 
     if (options.procedure === 'zero') {
@@ -525,7 +525,6 @@ function updateModularQuestionnaireVisibility() {
     const rowQ7 = document.getElementById('mod-row-q7');
     const rowQ8 = document.getElementById('mod-row-q8');
     const rowQ12 = document.getElementById('mod-row-q12');
-    const rowQ13 = document.getElementById('mod-row-q13');
 
     const standardProcedure = procedure === 'standard';
     const directProcedure = procedure === 'direct';
@@ -543,7 +542,6 @@ function updateModularQuestionnaireVisibility() {
         && (distanceImprecise || zImprecise)
         && allImpreciseAreInterval;
     const showUnitWeight = !directProcedure;
-    const showVariabilityMethod = options.output_type === 'variability';
 
     if (rowQ4) rowQ4.style.display = showDistanceType ? 'flex' : 'none';
     if (rowQ5) rowQ5.style.display = showDistanceFormat ? 'flex' : 'none';
@@ -551,7 +549,6 @@ function updateModularQuestionnaireVisibility() {
     if (rowQ7) rowQ7.style.display = showZFormat ? 'flex' : 'none';
     if (rowQ8) rowQ8.style.display = showProbability ? 'flex' : 'none';
     if (rowQ12) rowQ12.style.display = showUnitWeight ? 'flex' : 'none';
-    if (rowQ13) rowQ13.style.display = showVariabilityMethod ? 'flex' : 'none';
 
     if (!showDistanceFormat) {
         const q5 = document.getElementById('mod-q5-distance-format');
@@ -568,10 +565,6 @@ function updateModularQuestionnaireVisibility() {
     if (!showUnitWeight) {
         const q12 = document.getElementById('mod-q12-unit');
         if (q12) q12.value = 'fixed';
-    }
-    if (!showVariabilityMethod) {
-        const q13 = document.getElementById('mod-q13-var-method');
-        if (q13) q13.value = 'sampling';
     }
 
     const zTypeSelect = document.getElementById('mod-q6-z');
@@ -691,13 +684,6 @@ function ensureModularQuestionnairePanel() {
                     </select>
                 </div>
 
-                <div id="mod-row-q13" style="display:none; gap:0.45rem; align-items:center;">
-                    <label for="mod-q13-var-method" style="min-width:18rem;">Dynamic analysis outputs</label>
-                    <select id="mod-q13-var-method" class="labelmaxmin form-control" disabled>
-                        <option value="sampling" selected>Sampling + extreme scenarios</option>
-                    </select>
-                    <span style="font-size:0.75rem; color:#6f7784;">Both outputs are always generated together.</span>
-                </div>
             </div>
         `;
 
@@ -717,7 +703,6 @@ function ensureModularQuestionnairePanel() {
         document.getElementById('mod-q8-prob').value = defaults.probability;
         document.getElementById('mod-q11-output').value = defaults.output_type;
         document.getElementById('mod-q12-unit').value = defaults.unit_weight;
-        document.getElementById('mod-q13-var-method').value = defaults.variability_method;
     }
 
     panel.style.display = selectedMethod === 'modular_srf' ? 'block' : 'none';
