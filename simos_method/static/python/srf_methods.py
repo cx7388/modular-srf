@@ -1636,9 +1636,9 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
     )
     if should_attach_distribution_summary:
         try:
-            summary_decimals = max(2, int(w_value))
+            summary_decimals = max(0, int(w_value))
         except (TypeError, ValueError):
-            summary_decimals = 2
+            summary_decimals = 1
         simos_calc_results = _attach_solution_summary_columns(
             simos_calc_results,
             srf_samples=srf_samples,

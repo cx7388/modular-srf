@@ -9,6 +9,7 @@ Default priority is HiGHS (fast) with CBC fallback.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Number
 import os
 from typing import Iterable, Optional
 
@@ -75,6 +76,29 @@ if not isinstance(getattr(pulp.LpVariable, "Obj", None), property):
 
 def quicksum(terms: Iterable):
     return pulp.lpSum(list(terms))
+
+
+def _normalize_objective_expr(expr):
+    """
+    PuLP 3.3 expects the objective to be an affine-expression-like object, not a
+    bare Python numeric constant.
+    """
+    if expr is None:
+        return pulp.LpAffineExpression()
+    if isinstance(expr, Number):
+        normalized = pulp.LpAffineExpression()
+        numeric_value = float(expr)
+        if numeric_value != 0.0:
+            normalized += numeric_value
+        return normalized
+    if isinstance(expr, pulp.LpVariable):
+        return pulp.LpAffineExpression([(expr, 1.0)])
+    if not hasattr(expr, "isNumericalConstant"):
+        try:
+            return pulp.LpAffineExpression(expr)
+        except Exception:
+            return expr
+    return expr
 
 
 def _to_optional_int(value):
@@ -151,7 +175,7 @@ class Model:
         self._vars = []
         self._params = {}
         self._explicit_objective_set = False
-        self._objective_expr = 0.0
+        self._objective_expr = _normalize_objective_expr(0.0)
         self._objective_sense = GRB.MINIMIZE
         self._use_var_obj_coeffs = False
         self.status = GRB.OTHER
@@ -186,10 +210,10 @@ class Model:
     def setObjective(self, expr, sense: int = GRB.MINIMIZE) -> None:
         self._explicit_objective_set = True
         self._use_var_obj_coeffs = False
-        self._objective_expr = expr
+        self._objective_expr = _normalize_objective_expr(expr)
         self._objective_sense = sense
         self._problem.sense = pulp.LpMinimize if sense == GRB.MINIMIZE else pulp.LpMaximize
-        self._problem.objective = expr if expr is not None else 0.0
+        self._problem.objective = self._objective_expr
 
     def optimize(self) -> None:
         if self._use_var_obj_coeffs:
@@ -201,12 +225,12 @@ class Model:
                 pulp.LpMinimize if self._objective_sense == GRB.MINIMIZE else pulp.LpMaximize
             )
         elif self._explicit_objective_set:
-            self._problem.objective = self._objective_expr if self._objective_expr is not None else 0.0
+            self._problem.objective = _normalize_objective_expr(self._objective_expr)
             self._problem.sense = (
                 pulp.LpMinimize if self._objective_sense == GRB.MINIMIZE else pulp.LpMaximize
             )
         else:
-            self._problem.objective = 0.0
+            self._problem.objective = _normalize_objective_expr(0.0)
             self._problem.sense = pulp.LpMinimize
 
         message_flag = bool(self._params.get("OutputFlag", 0))

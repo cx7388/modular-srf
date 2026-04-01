@@ -105,7 +105,7 @@ def preprocess_dropzone(cards_arrangement):
     return cards_arrangement
 
 
-def postprocess_dropzone(simos_calc_results):
+def postprocess_dropzone(simos_calc_results, weight_decimals=1):
     """
     Formats the calculation results for frontend display.
     
@@ -119,6 +119,10 @@ def postprocess_dropzone(simos_calc_results):
             - Formatted rank values as strings
     """
     simos_calc_results = simos_calc_results.copy()
+    try:
+        weight_decimals = max(0, int(weight_decimals))
+    except (TypeError, ValueError):
+        weight_decimals = 1
 
     # Rename known output columns and keep any extra diagnostic columns.
     rename_map = {
@@ -143,6 +147,18 @@ def postprocess_dropzone(simos_calc_results):
     extra_columns = [col for col in simos_calc_results.columns if col not in ordered_columns]
     simos_calc_results = simos_calc_results[ordered_columns + extra_columns]
 
+    numeric_weight_columns = [
+        'Weights [%]',
+        'Center weight [k_center]',
+        'Min weight [k_min]',
+        'Max weight [k_max]',
+    ]
+    for col in numeric_weight_columns:
+        if col in simos_calc_results.columns:
+            simos_calc_results[col] = pd.to_numeric(
+                simos_calc_results[col], errors='coerce'
+            ).round(weight_decimals)
+
     # Sort criteria rows by rank then name (before appending summary row).
     sort_view = simos_calc_results.copy()
     if 'Rank [r]' in sort_view.columns:
@@ -163,13 +179,13 @@ def postprocess_dropzone(simos_calc_results):
     if 'Criteria' in sum_row:
         sum_row['Criteria'] = n_criteria
     if 'Weights [%]' in sort_view.columns:
-        sum_row['Weights [%]'] = pd.to_numeric(
+        sum_row['Weights [%]'] = round(pd.to_numeric(
             sort_view['Weights [%]'], errors='coerce'
-        ).sum()
+        ).sum(), weight_decimals)
     if 'Center weight [k_center]' in sort_view.columns:
-        sum_row['Center weight [k_center]'] = pd.to_numeric(
+        sum_row['Center weight [k_center]'] = round(pd.to_numeric(
             sort_view['Center weight [k_center]'], errors='coerce'
-        ).sum()
+        ).sum(), weight_decimals)
 
     simos_calc_results = pd.concat(
         [sort_view, pd.DataFrame([sum_row], index=['Sum'])],
@@ -487,7 +503,7 @@ def calculate():
             raise calc_exc
 
         # Reorder and label columns so the frontend can render one consistent table.
-        simos_calc_results = postprocess_dropzone(simos_calc_results)
+        simos_calc_results = postprocess_dropzone(simos_calc_results, weight_decimals=w_value)
 
         srf_methods_module.finish_calculation_progress('Calculation complete.', status='completed')
         return jsonify({

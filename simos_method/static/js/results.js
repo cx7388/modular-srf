@@ -163,6 +163,10 @@ function createTableFromDataframe(dataframe, selectedMethod = null) {
     }
 
     const method = selectedMethod || document.getElementById("srf_method")?.value;
+    const weightDecimalPlacesRaw = document.getElementById("w_value")?.value;
+    const weightDecimalPlaces = Number.isFinite(Number.parseInt(weightDecimalPlacesRaw, 10))
+        ? Math.max(0, Number.parseInt(weightDecimalPlacesRaw, 10))
+        : 1;
     const nonCrispMethods = new Set([
         'robust_srf',
         'wap',
@@ -175,6 +179,25 @@ function createTableFromDataframe(dataframe, selectedMethod = null) {
     // create a table element
     const table = document.createElement('table');
     table.setAttribute('border', '1');
+
+    const shouldFormatWeightCell = (header, row) => {
+        if (!header || row?.["Rank [r]"] === "Sum" && header === 'Criteria') {
+            return false;
+        }
+        return [
+            'Weights [%]',
+            'Center weight [k_center]',
+            'Min weight [k_min]',
+            'Max weight [k_max]',
+        ].includes(header);
+    };
+
+    const formatWeightCellValue = (value) => {
+        const numericValue = Number.parseFloat(value);
+        return Number.isFinite(numericValue)
+            ? numericValue.toFixed(weightDecimalPlaces)
+            : value;
+    };
 
     // create table header row
     let headers = Object.keys(dataframe[0]);
@@ -190,7 +213,9 @@ function createTableFromDataframe(dataframe, selectedMethod = null) {
         const tr = document.createElement('tr');
         headers.forEach(header => {
             const td = document.createElement('td');
-            td.textContent = row[header];
+            td.textContent = shouldFormatWeightCell(header, row)
+                ? formatWeightCellValue(row[header])
+                : row[header];
             tr.appendChild(td);
         });
         table.appendChild(tr);
