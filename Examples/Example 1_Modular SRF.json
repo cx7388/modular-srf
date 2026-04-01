@@ -1,0 +1,73 @@
+{
+  "format": "srf-elicitation-config-v2",
+  "exported_at": "2026-04-01T14:37:19.451Z",
+  "srf_method": "modular_srf",
+  "cards_arrangement": [
+    {
+      "id": "criterion_2",
+      "name": "Volatility",
+      "class": "criterion",
+      "col": "10",
+      "row": "1"
+    },
+    {
+      "id": "criterion_1",
+      "name": "Wealth",
+      "class": "criterion",
+      "col": "6",
+      "row": "1"
+    },
+    {
+      "id": "criterion_3",
+      "name": "Max. drawdown",
+      "class": "criterion",
+      "col": "10",
+      "row": "2"
+    },
+    {
+      "id": "criterion_4",
+      "name": "SSR",
+      "class": "criterion",
+      "col": "12",
+      "row": "1"
+    },
+    {
+      "id": "criterion_5",
+      "name": "MSE",
+      "class": "criterion",
+      "col": "13",
+      "row": "1"
+    },
+    {
+      "id": "criterion_6",
+      "name": "MAE",
+      "class": "criterion",
+      "col": "13",
+      "row": "2"
+    }
+  ],
+  "form_values": {
+    "mod-q3-procedure": "zero",
+    "mod-q4-distance": "imprecise",
+    "mod-q5-distance-format": "interval",
+    "mod-q6-z": "precise",
+    "mod-q7-z-format": "interval",
+    "mod-q8-prob": "no",
+    "mod-q11-output": "variability",
+    "mod-q12-unit": "dynamic",
+    "e0min-value": "0",
+    "e0max-value": "1",
+    "emin-1": "0",
+    "emax-1": "0",
+    "emin-2": "0",
+    "emax-2": "1",
+    "emin-3": "2",
+    "emax-3": "3",
+    "w-value": "1",
+    "sampling-size-input": "2000",
+    "opt-inconsistency-suggestions": "3",
+    "opt-enable-dictatorship": true,
+    "opt-enable-minweight": true,
+    "opt-minweight-value": "5"
+  }
+}

@@ -1238,6 +1238,16 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             )
         )
     )
+    # The zero-procedure + dynamic-unit modular variant already encodes its
+    # variability through rank-specific gaps. Adding the conditional gap MILP
+    # layer on top of that shrinks the feasible region and reproduces the
+    # post-2b2bcdd regression seen in the attached case.
+    zero_dynamic_sampling_case = bool(
+        is_modular
+        and modular_output_variability
+        and resolved_modular_options.get('procedure') == 'zero'
+        and modular_dynamic_unit
+    )
     # Imprecise distance variants sometimes need extra binary logic so gap bounds are
     # enforced conditionally instead of with one global spacing parameter.
     conditional_gap_milp = bool(
@@ -1250,6 +1260,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             'probability-distribution',
             'hfl-linguistic-interval',
         }
+        and not zero_dynamic_sampling_case
     )
 
     # Dynamic unit weight (Q12b) is modeled through fully-flexible successive constraints.
@@ -1634,10 +1645,10 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             srf_min_max=srf_min_max,
             decimals=summary_decimals
         )
-        if isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
-            asi_value = calc_asi(srf_min_max)
-        elif isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
+        if asi_value is None and isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
             asi_value = calc_asi(srf_samples)
+        elif asi_value is None and isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
+            asi_value = calc_asi(srf_min_max)
 
     if should_attach_distribution_summary:
         if isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
@@ -2115,26 +2126,49 @@ def _try_hit_and_run_zero_dynamic_samples(cards_arrangement,
         b_rows.append(-delta_frac)
 
     if conditional_gap_milp and len(gap_bounds) >= 2:
+        def _append_gap_relation(first_gap_idx, second_gap_idx, min_gap):
+            """
+            Encodes diff(first_gap) - diff(second_gap) >= min_gap
+            in the rank-weight polytope coordinates.
+            """
+            row = np.zeros(n_ranks)
+            row[first_gap_idx] += 1.0
+            row[first_gap_idx + 1] += -1.0
+            row[second_gap_idx] += -1.0
+            row[second_gap_idx + 1] += 1.0
+            A_rows.append(row)
+            b_rows.append(-float(min_gap))
+
         for left in range(len(gap_bounds) - 1):
             for right in range(left + 1, len(gap_bounds)):
                 left_low, left_high = gap_bounds[left]
                 right_low, right_high = gap_bounds[right]
-                if left_low > right_high:
-                    row = np.zeros(n_ranks)
-                    row[left] += 1.0
-                    row[left + 1] += -1.0
-                    row[right] += -1.0
-                    row[right + 1] += 1.0
-                    A_rows.append(row)
-                    b_rows.append(-delta_frac)
-                elif right_low > left_high:
-                    row = np.zeros(n_ranks)
-                    row[right] += 1.0
-                    row[right + 1] += -1.0
-                    row[left] += -1.0
-                    row[left + 1] += 1.0
-                    A_rows.append(row)
-                    b_rows.append(-delta_frac)
+                can_left_gt = left_high > right_low
+                can_right_gt = right_high > left_low
+                can_equal = not (left_high < right_low or right_high < left_low)
+
+                # Mirror the deterministic consequences of the exact MILP logic:
+                # when one gap can never exceed the other, preserve that weak/strict
+                # ordering in the continuous rank-weight sampler as well.
+                if not can_left_gt and not can_right_gt and can_equal:
+                    _append_gap_relation(left, right, 0.0)
+                    _append_gap_relation(right, left, 0.0)
+                    continue
+
+                if not can_left_gt:
+                    _append_gap_relation(
+                        right,
+                        left,
+                        0.0 if can_equal else delta_frac
+                    )
+                    continue
+
+                if not can_right_gt:
+                    _append_gap_relation(
+                        left,
+                        right,
+                        0.0 if can_equal else delta_frac
+                    )
 
     row = np.zeros(n_ranks)
     row[0] = z_low
@@ -4279,6 +4313,7 @@ def calc_srf_rand_samples(cards_arrangement,
     """
 
     results = []
+    allow_convex_mixing = True
     update_calculation_progress(
         stage='sampling',
         message='Uniformly sampling feasible solutions...',
@@ -4338,6 +4373,10 @@ def calc_srf_rand_samples(cards_arrangement,
             launch_smaa=False,
             conditional_gap_milp=conditional_gap_milp,
             dynamic_unit_weight=dynamic_unit_weight
+        )
+        allow_convex_mixing = all(
+            _lp_var_is_continuous(var)
+            for var in getattr(base_model, '_vars', [])
         )
         hitrun_samples = _try_hit_and_run_model_samples(
             model=base_model,
@@ -4443,6 +4482,11 @@ def calc_srf_rand_samples(cards_arrangement,
             weights = base_weights
             criteria_cards = base_criteria_cards
             delta = base_delta
+        if model is not None:
+            allow_convex_mixing = all(
+                _lp_var_is_continuous(var)
+                for var in getattr(model, '_vars', [])
+            )
         aux_scale_vars = [
             var for var in getattr(model, '_vars', [])
             if isinstance(getattr(var, 'name', None), str)
@@ -4487,7 +4531,9 @@ def calc_srf_rand_samples(cards_arrangement,
     # Interior-point enrichment for belief-degree and HFL:
     # LP-based sampling tends to return many vertices; mix feasible solutions to
     # guarantee points inside the polyhedron for PCA clouds.
-    if comp_rule_successive in ['probability-distribution', 'hfl-linguistic-interval'] and len(results) >= 2:
+    if (allow_convex_mixing
+            and comp_rule_successive in ['probability-distribution', 'hfl-linguistic-interval']
+            and len(results) >= 2):
         base_results = results.copy()
         mixed_results = []
         mixed_signatures = set()
@@ -4522,7 +4568,7 @@ def calc_srf_rand_samples(cards_arrangement,
 
     # Final densification: if still sparse, keep adding interior convex combinations.
     seen_signatures = {_solution_signature(solution) for solution in results}
-    if len(results) < n_samples and len(results) >= 2:
+    if allow_convex_mixing and len(results) < n_samples and len(results) >= 2:
         densify_attempts = 0
         max_densify_attempts = max(30 * (n_samples - len(results)), (n_samples - len(results)) + 100)
         while len(results) < n_samples and densify_attempts < max_densify_attempts:

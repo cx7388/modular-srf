@@ -43,6 +43,9 @@ const FIGURE_DOWNLOAD_CONTROL_ID = 'figure-download-controls';
 const FIGURE_DOWNLOAD_SELECT_ID = 'figure-download-format';
 const PNG_EXPORT_SCALE_300_PPI = 300 / 96;
 const SUPPORTED_FIGURE_DOWNLOAD_FORMATS = new Set(['svg', 'png', 'jpeg', 'webp']);
+const DISTRIBUTION_CHART_CONTROL_ID = 'distribution-chart-controls';
+const DISTRIBUTION_CHART_SELECT_ID = 'distribution-chart-type';
+let lastDistributionPlotState = null;
 
 
 function ensureFigureDownloadControls() {
@@ -233,6 +236,226 @@ function hasUsableBoxDistribution(distributionByCriterion) {
 }
 
 
+function ensureDistributionChartControls() {
+    let controls = document.getElementById(DISTRIBUTION_CHART_CONTROL_ID);
+    if (controls) {
+        return controls;
+    }
+
+    const header = document.querySelector('#boxplot-panel .results-figure-header');
+    if (!header) {
+        return null;
+    }
+
+    controls = document.createElement('div');
+    controls.id = DISTRIBUTION_CHART_CONTROL_ID;
+    controls.setAttribute('role', 'group');
+    controls.setAttribute('aria-label', 'Sampling distribution chart type');
+    Object.assign(controls.style, {
+        display: 'none',
+        alignItems: 'center',
+        gap: '0.5rem',
+        flexWrap: 'wrap'
+    });
+
+    const label = document.createElement('label');
+    label.htmlFor = DISTRIBUTION_CHART_SELECT_ID;
+    label.textContent = 'Distribution chart';
+    Object.assign(label.style, {
+        fontSize: '0.82rem',
+        fontWeight: '600',
+        color: '#425466'
+    });
+
+    const select = document.createElement('select');
+    select.id = DISTRIBUTION_CHART_SELECT_ID;
+    select.className = 'labelmaxmin form-control';
+    select.setAttribute('aria-label', 'Choose sampling distribution chart type');
+    select.style.width = '10rem';
+    select.innerHTML = `
+        <option value="box" selected>Box plot</option>
+        <option value="violin">Violin plot</option>
+    `;
+    select.addEventListener('change', () => {
+        if (lastDistributionPlotState?.hasDistribution) {
+            renderDistributionPlot(lastDistributionPlotState);
+        }
+    });
+
+    controls.append(label, select);
+    const infoPopover = header.querySelector('.info-popover');
+    header.insertBefore(controls, infoPopover || null);
+    return controls;
+}
+
+
+function setDistributionChartControlsVisible(isVisible) {
+    const controls = ensureDistributionChartControls();
+    if (controls) {
+        controls.style.display = isVisible ? 'inline-flex' : 'none';
+    }
+}
+
+
+function getSelectedDistributionChartType() {
+    const value = document.getElementById(DISTRIBUTION_CHART_SELECT_ID)?.value;
+    return value === 'violin' ? 'violin' : 'box';
+}
+
+
+function buildDistributionTraces(distributionByCriterion, chartType) {
+    return Object.keys(distributionByCriterion).sort().map(key => {
+        const values = distributionByCriterion[key];
+        const baseTrace = {
+            x: Array(values.length).fill(key),
+            y: values,
+            name: key,
+            showlegend: false,
+            hovertemplate: 'Criterion: %{x}<br>Weight: %{y:.2f}%<extra></extra>'
+        };
+
+        if (chartType === 'violin') {
+            return {
+                ...baseTrace,
+                type: 'violin',
+                points: false,
+                box: {
+                    visible: false
+                },
+                meanline: {
+                    visible: true
+                },
+                fillcolor: 'rgba(80, 149, 204, 0.58)',
+                line: {
+                    color: '#325d88',
+                    width: 1.2
+                },
+                opacity: 0.9,
+                spanmode: 'hard'
+            };
+        }
+
+        return {
+            ...baseTrace,
+            type: 'box',
+            boxpoints: false,
+            boxmean: true,
+            jitter: 0.5,
+            whiskerwidth: 0.2,
+            fillcolor: 'rgba(80, 149, 204, 0.38)',
+            marker: {
+                color: '#325d88',
+                size: 2
+            },
+            line: {
+                color: '#325d88',
+                width: 1.1
+            }
+        };
+    });
+}
+
+
+function buildSelectedWeightBarTrace(simos_calc_results) {
+    const lineData = simos_calc_results.reduce((acc, item) => {
+        if (item["Rank [r]"] !== "Sum") {
+            const weightValue = item["Weights [%]"] ?? item["Normalized weights [k_i]"];
+            acc[item["Criteria"]] = parseFloat(weightValue);
+        }
+        return acc;
+    }, {});
+
+    const sortedCriteria = Object.keys(lineData).sort();
+    return {
+        x: sortedCriteria,
+        y: sortedCriteria.map(key => lineData[key]),
+        type: 'bar',
+        showlegend: false,
+        marker: {
+            color: 'rgba(50,93,136,0.72)',
+            line: {
+                color: 'black',
+                width: 1
+            }
+        },
+        width: 0.4,
+        hovertemplate: 'Criterion: %{x}<br>Weight: %{y:.2f}%<extra></extra>'
+    };
+}
+
+
+function renderDistributionPlot(plotState) {
+    if (!plotState) return;
+
+    const chartType = plotState.hasDistribution ? getSelectedDistributionChartType() : 'bar';
+    updateBoxplotPanelCopy(plotState.hasDistribution, chartType);
+    setDistributionChartControlsVisible(plotState.hasDistribution);
+
+    const traces = plotState.hasDistribution
+        ? buildDistributionTraces(plotState.transposed, chartType)
+        : [buildSelectedWeightBarTrace(plotState.simos_calc_results)];
+
+    const plotWidth = getPlotContainerWidth(plotState.container_id, 1200);
+    const layout = {
+        title: {
+            text: plotState.hasDistribution
+                ? (chartType === 'violin' ? 'Violin plot of feasible weights' : 'Box plot of feasible weights')
+                : 'Weights % by Criteria',
+            font: {
+                weight: 'bold'
+            }
+        },
+        yaxis: {
+            title: {
+                text: 'Weights %'
+            },
+            range: [0, null],
+            showgrid: true,
+            zeroline: true,
+            dtick: 5,
+            gridwidth: 1,
+            zerolinewidth: 1.2,
+            showline: true,
+            mirror: 'all',
+            linecolor: 'black',
+            linewidth: 1,
+            ticks: 'outside',
+            ticklen: 6,
+            tickwidth: 1,
+            tickcolor: 'black'
+        },
+        xaxis: {
+            title: {
+                text: 'Criteria',
+            },
+            showgrid: false,
+            tickmode: 'array',
+            showticklabels: true,
+            showline: true,
+            mirror: 'all',
+            linecolor: 'black',
+            linewidth: 1,
+            ticks: 'outside',
+            ticklen: 6,
+            tickwidth: 1,
+            tickcolor: 'black'
+        },
+        showlegend: false,
+        autosize: true,
+        height: plotWidth < 720 ? 430 : 500,
+        violingap: chartType === 'violin' ? 0.22 : undefined
+    };
+
+    const exportFilename = !plotState.hasDistribution
+        ? 'SRF_bar_chart'
+        : (chartType === 'violin' ? 'SRF_violin_plot' : 'SRF_box_plot');
+    const config = buildPlotDownloadConfig(exportFilename, plotWidth, layout.height);
+
+    Plotly.newPlot(plotState.container_id, traces, layout, config);
+    setFigureDownloadControlsVisible(true);
+}
+
+
 async function plot_boxplot(simos_calc_results, noDistribution, container_id = 'boxplot') {
     setFigureCardVisibility('boxplot-panel', true);
     let transposed;
@@ -291,133 +514,13 @@ async function plot_boxplot(simos_calc_results, noDistribution, container_id = '
         }
     }
 
-    updateBoxplotPanelCopy(hasDistribution);
-
-    // create Plotly traces
-    const traces = Object.keys(transposed).sort().map(key => ({
-        y: transposed[key],
-        type: 'box',
-        name: key,
-        boxpoints: false,
-        boxmean: true,
-        jitter: 0.5,
-        whiskerwidth: 0.2,
-        fillcolor: 'cls',
-        marker: {
-            color: '#325d88',
-            size: 2
-        },
-        line: {
-            width: 1
-        },
-        showlegend: false,
-    }));
-    if (hasDistribution) {
-        // add a dummy trace to represent all box plots
-        traces.push({
-            y: [null],
-            type: 'box',
-            name: 'Distribution of Criteria Weights',
-            fillcolor: 'cls',
-            marker: {
-                color: '#325d88',
-                size: 2
-            },
-            line: {
-                width: 1
-            },
-            hoverinfo: 'skip',
-            showlegend: true,
-        });
-    }
-
-    const plotWidth = getPlotContainerWidth(container_id, 1200);
-    const layout = {
-        title: {
-            text: 'Weights % by Criteria',
-            font: {
-                weight: 'bold'
-            }
-        },
-        yaxis: {
-            title: {
-                text: 'Weights %'
-            },
-            range: [0, null],
-            showgrid: true,
-            zeroline: true,
-            dtick: 5,
-            gridwidth: 1,
-            zerolinewidth: 1.2,
-            showline: true,
-            mirror: 'all',
-            linecolor: 'black',
-            linewidth: 1,
-            ticks: 'outside',
-            ticklen: 6,
-            tickwidth: 1,
-            tickcolor: 'black'
-        },
-        xaxis: {
-            title: {
-                text: 'Criteria',
-            },
-            showgrid: false,
-            tickmode: 'array',
-            showticklabels: true,
-            showline: true,
-            mirror: 'all',
-            linecolor: 'black',
-            linewidth: 1,
-            ticks: 'outside',
-            ticklen: 6,
-            tickwidth: 1,
-            tickcolor: 'black'
-        },
-        showlegend: true,
-        legend: {
-            x: 0.03,
-            y: 0.97,
-            xanchor: 'left',
-            yanchor: 'top',
-            bgcolor: 'rgba(255,255,255,0.5)',
-        },
-        autosize: true,
-        height: plotWidth < 720 ? 430 : 500
+    lastDistributionPlotState = {
+        simos_calc_results,
+        transposed,
+        hasDistribution,
+        container_id
     };
-
-    // LINE CHART
-    const lineData = simos_calc_results.reduce((acc, item) => {
-        if (item["Rank [r]"] !== "Sum") {
-            const weightValue = item["Weights [%]"] ?? item["Normalized weights [k_i]"];
-            acc[item["Criteria"]] = parseFloat(weightValue);
-        }
-        return acc;
-    }, {});
-
-    // Prepare line trace
-    const lineTrace = {
-        x: Object.keys(lineData).sort(),      // x-axis categories
-        y: Object.keys(lineData).sort().map(k => lineData[k]), // corresponding y values
-        type: hasDistribution ? 'scatter' : 'bar',
-        mode: hasDistribution ? 'lines+markers' : undefined,
-        name: 'Selected Criteria Weights',
-        line: hasDistribution ? { color: '#D35400', width: 2 } : undefined,
-        marker: hasDistribution
-            ? { size: 6, color: '#3e3f3a' }
-            : { color: 'rgba(50,93,136,0.7)', line: { color: 'black', width: 1 } },
-        width: hasDistribution ? undefined : 0.4
-    };
-
-    // Add line trace to the boxplot traces
-    traces.push(lineTrace);
-
-    // export plot as an image with a specified scale (higher DPI)
-    const exportFilename = hasDistribution ? 'SRF_box_plot' : 'SRF_bar_chart';
-    const config = buildPlotDownloadConfig(exportFilename, plotWidth, layout.height);
-
-    Plotly.newPlot(container_id, traces, layout, config);
-    setFigureDownloadControlsVisible(true);
+    renderDistributionPlot(lastDistributionPlotState);
 }
 
 
@@ -449,7 +552,7 @@ function resizeResultPlots() {
 window.addEventListener('resize', resizeResultPlots);
 
 
-function updateBoxplotPanelCopy(hasDistribution) {
+function updateBoxplotPanelCopy(hasDistribution, chartType = 'box') {
     const title = document.getElementById('boxplot-panel-title');
     const description = document.getElementById('boxplot-panel-description');
     const help = document.getElementById('boxplot-panel-help');
@@ -458,14 +561,19 @@ function updateBoxplotPanelCopy(hasDistribution) {
 
     if (hasDistribution) {
         title.textContent = 'Sampling Distribution';
-        description.textContent = 'Boxplots summarize the feasible sample cloud for each criterion. For continuous SRF models, the cloud is generated with a hit-and-run sampler targeting the uniform distribution over the admissible region, and the overlaid line shows the displayed SRF weight vector.';
-        help.textContent = 'The tool draws the requested number of feasible solutions from the admissible SRF region. For continuous models, it uses hit-and-run sampling targeting a uniform distribution over that region; if a run requires discrete logical constraints, it falls back to feasible-solution exploration. Each box aggregates the sampled weights for one criterion, while the line traces the weight vector returned in the results table.';
+        if (chartType === 'violin') {
+            description.textContent = 'Violin plots summarize the feasible sample cloud for each criterion. For continuous SRF models, the cloud is generated with a hit-and-run sampler targeting the uniform distribution over the admissible region, and the line inside each violin marks the sample mean.';
+            help.textContent = 'The tool draws feasible solutions from the admissible SRF region. For continuous models, it uses hit-and-run sampling targeting a uniform distribution over that region; if a run requires discrete logical constraints, it falls back to exact feasible-solution exploration on the same optimization model. Each violin represents one criterion and the internal line marks the sample mean.';
+        } else {
+            description.textContent = 'Box plots summarize the feasible sample cloud for each criterion. For continuous SRF models, the cloud is generated with a hit-and-run sampler targeting the uniform distribution over the admissible region.';
+            help.textContent = 'The tool draws feasible solutions from the admissible SRF region. For continuous models, it uses hit-and-run sampling targeting a uniform distribution over that region; if a run requires discrete logical constraints, it falls back to exact feasible-solution exploration on the same optimization model. Each box aggregates the sampled weights for one criterion without overlaying a separate selected-weight line.';
+        }
         return;
     }
 
     title.textContent = 'Selected Weights';
     description.textContent = 'When no variability analysis is available, the figure falls back to a simple bar chart of the displayed SRF weight vector.';
-    help.textContent = 'This chart is generated directly from the single SRF weight vector returned by the solver. No feasible sample cloud is used for this run, so the result is shown as bars instead of boxplots.';
+    help.textContent = 'This chart is generated directly from the single SRF weight vector returned by the solver. No feasible sample cloud is used for this run, so the result is shown as bars instead of a box or violin distribution.';
 }
 
 
@@ -751,7 +859,10 @@ function plot_pca(noDistribution, container_id = 'pca_plot') {
 
 
 ensureFigureDownloadControls();
+ensureDistributionChartControls();
 
 document.querySelector('.calculate-button')?.addEventListener('click', () => {
+    lastDistributionPlotState = null;
     setFigureDownloadControlsVisible(false);
+    setDistributionChartControlsVisible(false);
 });
