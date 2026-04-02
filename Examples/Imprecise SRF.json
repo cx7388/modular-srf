@@ -1,0 +1,80 @@
+{
+  "format": "srf-elicitation-config-v2",
+  "exported_at": "2026-04-02T12:54:55.148Z",
+  "srf_method": "imprecise_srf",
+  "cards_arrangement": [
+    {
+      "id": "criterion_5",
+      "name": "g1",
+      "class": "criterion",
+      "col": "9",
+      "row": "1"
+    },
+    {
+      "id": "criterion_1",
+      "name": "g6",
+      "class": "criterion",
+      "col": "14",
+      "row": "1"
+    },
+    {
+      "id": "criterion_4",
+      "name": "g5",
+      "class": "criterion",
+      "col": "12",
+      "row": "1"
+    },
+    {
+      "id": "criterion_3",
+      "name": "g7",
+      "class": "criterion",
+      "col": "12",
+      "row": "2"
+    },
+    {
+      "id": "criterion_2",
+      "name": "g3",
+      "class": "criterion",
+      "col": "9",
+      "row": "2"
+    },
+    {
+      "id": "criterion_30",
+      "name": "g2",
+      "class": "criterion",
+      "col": "7",
+      "row": "1"
+    },
+    {
+      "id": "criterion_31",
+      "name": "g4",
+      "class": "criterion",
+      "col": "7",
+      "row": "2"
+    }
+  ],
+  "form_values": {
+    "mod-q3-procedure": "standard",
+    "mod-q4-distance": "precise",
+    "mod-q5-distance-format": "interval",
+    "mod-q6-z": "precise",
+    "mod-q7-z-format": "interval",
+    "mod-q8-prob": "no",
+    "mod-q11-output": "single",
+    "mod-q12-unit": "fixed",
+    "zmin": "2",
+    "zmax": "4",
+    "emin-1": "1",
+    "emax-1": "3",
+    "emin-2": "1",
+    "emax-2": "1",
+    "emin-3": "2",
+    "emax-3": "4",
+    "w-value": "2",
+    "sampling-size-input": "20000",
+    "opt-inconsistency-suggestions": "3",
+    "opt-enable-dictatorship": false,
+    "opt-enable-minweight": false,
+    "opt-minweight-value": "0"
+  }
+}

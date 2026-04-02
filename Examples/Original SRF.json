@@ -1,0 +1,115 @@
+{
+  "format": "srf-elicitation-config-v2",
+  "exported_at": "2026-04-02T11:43:26.177Z",
+  "srf_method": "srf",
+  "cards_arrangement": [
+    {
+      "id": "criterion_1",
+      "name": "c",
+      "class": "criterion",
+      "col": "14",
+      "row": "1"
+    },
+    {
+      "id": "criterion_2",
+      "name": "g",
+      "class": "criterion",
+      "col": "14",
+      "row": "2"
+    },
+    {
+      "id": "criterion_3",
+      "name": "l",
+      "class": "criterion",
+      "col": "14",
+      "row": "3"
+    },
+    {
+      "id": "criterion_4",
+      "name": "d",
+      "class": "criterion",
+      "col": "13",
+      "row": "1"
+    },
+    {
+      "id": "white_card_4",
+      "name": "Blank card",
+      "class": "white",
+      "col": "12",
+      "row": "1"
+    },
+    {
+      "id": "criterion_5",
+      "name": "b",
+      "class": "criterion",
+      "col": "11",
+      "row": "1"
+    },
+    {
+      "id": "criterion_6",
+      "name": "f",
+      "class": "criterion",
+      "col": "11",
+      "row": "2"
+    },
+    {
+      "id": "criterion_7",
+      "name": "i",
+      "class": "criterion",
+      "col": "11",
+      "row": "3"
+    },
+    {
+      "id": "criterion_8",
+      "name": "j",
+      "class": "criterion",
+      "col": "11",
+      "row": "4"
+    },
+    {
+      "id": "criterion_9",
+      "name": "e",
+      "class": "criterion",
+      "col": "10",
+      "row": "1"
+    },
+    {
+      "id": "criterion_10",
+      "name": "a",
+      "class": "criterion",
+      "col": "9",
+      "row": "1"
+    },
+    {
+      "id": "criterion_11",
+      "name": "h",
+      "class": "criterion",
+      "col": "9",
+      "row": "2"
+    },
+    {
+      "id": "criterion_12",
+      "name": "k",
+      "class": "criterion",
+      "col": "8",
+      "row": "1"
+    }
+  ],
+  "form_values": {
+    "mod-q3-procedure": "standard",
+    "mod-q4-distance": "precise",
+    "mod-q5-distance-format": "interval",
+    "mod-q6-z": "precise",
+    "mod-q7-z-format": "interval",
+    "mod-q8-prob": "no",
+    "mod-q11-output": "single",
+    "mod-q12-unit": "fixed",
+    "z-value": "6.5",
+    "w-value": "1",
+    "sampling-size-input": "200",
+    "opt-inconsistency-suggestions": "3",
+    "opt-enable-dictatorship": false,
+    "opt-enable-minweight": false,
+    "opt-minweight-value": "0"
+  }
+}

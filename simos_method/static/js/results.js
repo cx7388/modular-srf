@@ -163,7 +163,8 @@ function createTableFromDataframe(dataframe, selectedMethod = null) {
     }
 
     const method = selectedMethod || document.getElementById("srf_method")?.value;
-    const weightDecimalPlacesRaw = document.getElementById("w_value")?.value;
+    const weightDecimalPlacesRaw = document.getElementById("w-value")?.value
+        ?? document.getElementById("w_value")?.value;
     const weightDecimalPlaces = Number.isFinite(Number.parseInt(weightDecimalPlacesRaw, 10))
         ? Math.max(0, Number.parseInt(weightDecimalPlacesRaw, 10))
         : 1;
