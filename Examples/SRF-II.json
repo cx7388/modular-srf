@@ -1,0 +1,59 @@
+{
+  "format": "srf-elicitation-config-v2",
+  "exported_at": "2026-04-02T13:43:14.929Z",
+  "srf_method": "modular_srf",
+  "cards_arrangement": [
+    {
+      "id": "criterion_8",
+      "name": "GT",
+      "class": "criterion",
+      "col": "13",
+      "row": "1"
+    },
+    {
+      "id": "criterion_9",
+      "name": "GR",
+      "class": "criterion",
+      "col": "11",
+      "row": "1"
+    },
+    {
+      "id": "criterion_10",
+      "name": "GS",
+      "class": "criterion",
+      "col": "8",
+      "row": "1"
+    },
+    {
+      "id": "criterion_11",
+      "name": "GE",
+      "class": "criterion",
+      "col": "5",
+      "row": "1"
+    }
+  ],
+  "form_values": {
+    "mod-q3-procedure": "zero",
+    "mod-q4-distance": "imprecise",
+    "mod-q5-distance-format": "interval",
+    "mod-q6-z": "precise",
+    "mod-q7-z-format": "interval",
+    "mod-q8-prob": "no",
+    "mod-q11-output": "variability",
+    "mod-q12-unit": "fixed",
+    "e0min-value": "3",
+    "e0max-value": "3",
+    "emin-1": "0",
+    "emax-1": "0",
+    "emin-2": "2",
+    "emax-2": "3",
+    "emin-3": "0",
+    "emax-3": "1",
+    "w-value": "2",
+    "sampling-size-input": "20000",
+    "opt-inconsistency-suggestions": "3",
+    "opt-enable-dictatorship": false,
+    "opt-enable-minweight": false,
+    "opt-minweight-value": "0"
+  }
+}

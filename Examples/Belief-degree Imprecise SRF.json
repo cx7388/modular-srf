@@ -1,0 +1,107 @@
+{
+  "format": "srf-elicitation-config-v2",
+  "exported_at": "2026-04-02T14:18:13.589Z",
+  "srf_method": "belief_degree_imprecise_srf",
+  "cards_arrangement": [
+    {
+      "id": "criterion_5",
+      "name": "g6",
+      "class": "criterion",
+      "col": "15",
+      "row": "1"
+    },
+    {
+      "id": "criterion_6",
+      "name": "g4",
+      "class": "criterion",
+      "col": "12",
+      "row": "1"
+    },
+    {
+      "id": "criterion_7",
+      "name": "g3",
+      "class": "criterion",
+      "col": "10",
+      "row": "1"
+    },
+    {
+      "id": "criterion_8",
+      "name": "g2",
+      "class": "criterion",
+      "col": "10",
+      "row": "2"
+    },
+    {
+      "id": "criterion_9",
+      "name": "g89",
+      "class": "criterion",
+      "col": "8",
+      "row": "1"
+    },
+    {
+      "id": "criterion_10",
+      "name": "g1",
+      "class": "criterion",
+      "col": "6",
+      "row": "1"
+    },
+    {
+      "id": "criterion_11",
+      "name": "g5",
+      "class": "criterion",
+      "col": "4",
+      "row": "1"
+    },
+    {
+      "id": "criterion_12",
+      "name": "g7",
+      "class": "criterion",
+      "col": "2",
+      "row": "1"
+    }
+  ],
+  "form_values": {
+    "mod-q3-procedure": "zero",
+    "mod-q4-distance": "imprecise",
+    "mod-q5-distance-format": "interval",
+    "mod-q6-z": "precise",
+    "mod-q7-z-format": "interval",
+    "mod-q8-prob": "no",
+    "mod-q11-output": "variability",
+    "mod-q12-unit": "fixed",
+    "z-value-1": "2",
+    "z-beta-1": "0.4",
+    "z-value-2": "3",
+    "z-beta-2": "0.6",
+    "e-value-1-1": "1",
+    "e-beta-1-1": "0.5",
+    "e-value-1-2": "2",
+    "e-beta-1-2": "0.5",
+    "e-value-2-1": "0",
+    "e-beta-2-1": "0.5",
+    "e-value-2-2": "1",
+    "e-beta-2-2": "0.5",
+    "e-value-3-1": "1",
+    "e-beta-3-1": "0.5",
+    "e-value-3-2": "2",
+    "e-beta-3-2": "0.5",
+    "e-value-4-1": "0",
+    "e-beta-4-1": "0.5",
+    "e-value-4-2": "1",
+    "e-beta-4-2": "0.5",
+    "e-value-5-1": "1",
+    "e-beta-5-1": "0.5",
+    "e-value-5-2": "2",
+    "e-beta-5-2": "0.5",
+    "e-value-6-1": "1",
+    "e-beta-6-1": "0.5",
+    "e-value-6-2": "2",
+    "e-beta-6-2": "0.5",
+    "w-value": "2",
+    "sampling-size-input": "10000",
+    "opt-inconsistency-suggestions": "3",
+    "opt-enable-dictatorship": false,
+    "opt-enable-minweight": false,
+    "opt-minweight-value": "0"
+  }
+}

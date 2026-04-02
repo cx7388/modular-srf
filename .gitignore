@@ -7,3 +7,4 @@ simos_method/static/python/__pycache__/utils.cpython-310.pyc
 simos_method/static/python/__pycache__/srf_methods.cpython-311.pyc
 simos_method/static/python/__pycache__/utils.cpython-311.pyc
 .python-version
+/simos_method/static/python/__pycache__/*

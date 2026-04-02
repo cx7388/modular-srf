@@ -1645,7 +1645,14 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             srf_min_max=srf_min_max,
             decimals=summary_decimals
         )
-        if asi_value is None and isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
+        if (not (is_modular and modular_output_variability)
+                and isinstance(srf_min_max, pd.DataFrame)
+                and not srf_min_max.empty):
+            # For classical variability-oriented methods, report the ASI from
+            # the extreme-scenario matrix, which matches the documented
+            # interpretation of the interface and the paper-style robust output.
+            asi_value = calc_asi(srf_min_max)
+        elif asi_value is None and isinstance(srf_samples, pd.DataFrame) and not srf_samples.empty:
             asi_value = calc_asi(srf_samples)
         elif asi_value is None and isinstance(srf_min_max, pd.DataFrame) and not srf_min_max.empty:
             asi_value = calc_asi(srf_min_max)
@@ -1835,6 +1842,45 @@ def _extract_freeopt_polytope(model):
     b_ub = np.asarray(b_ub_rows, dtype=float) if b_ub_rows else np.empty((0,), dtype=float)
     A_eq = np.asarray(A_eq_rows, dtype=float) if A_eq_rows else np.empty((0, n_vars), dtype=float)
     b_eq = np.asarray(b_eq_rows, dtype=float) if b_eq_rows else np.empty((0,), dtype=float)
+
+    # Some SRF models express exact relations through two opposite inequalities
+    # (for example, when an interval input collapses to one exact value). Keeping
+    # those pairs in A_ub can trap hit-and-run at a boundary vertex even though
+    # the feasible region still has positive dimension. Fold such pairs into the
+    # equality system before sampling.
+    if A_ub.size:
+        used_rows = np.zeros(len(A_ub), dtype=bool)
+        promoted_eq_rows = []
+        promoted_eq_rhs = []
+        row_tol = 1e-10
+
+        for left in range(len(A_ub)):
+            if used_rows[left]:
+                continue
+            for right in range(left + 1, len(A_ub)):
+                if used_rows[right]:
+                    continue
+                if (np.allclose(A_ub[left], -A_ub[right], atol=row_tol, rtol=0.0)
+                        and np.isclose(b_ub[left], -b_ub[right], atol=row_tol, rtol=0.0)):
+                    promoted_eq_rows.append(A_ub[left].copy())
+                    promoted_eq_rhs.append(float(b_ub[left]))
+                    used_rows[left] = True
+                    used_rows[right] = True
+                    break
+
+        if promoted_eq_rows:
+            remaining_mask = ~used_rows
+            A_ub = A_ub[remaining_mask]
+            b_ub = b_ub[remaining_mask]
+            promoted_eq = np.asarray(promoted_eq_rows, dtype=float)
+            promoted_rhs = np.asarray(promoted_eq_rhs, dtype=float)
+            if A_eq.size:
+                A_eq = np.vstack([A_eq, promoted_eq])
+                b_eq = np.concatenate([b_eq, promoted_rhs])
+            else:
+                A_eq = promoted_eq
+                b_eq = promoted_rhs
+
     return variables, A_ub, b_ub, A_eq, b_eq
 
 

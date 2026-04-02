@@ -1,0 +1,64 @@
+{
+  "format": "srf-elicitation-config-v2",
+  "exported_at": "2026-04-02T12:27:41.788Z",
+  "srf_method": "wap",
+  "cards_arrangement": [
+    {
+      "id": "criterion_1",
+      "name": "Criterion 1",
+      "class": "criterion",
+      "col": "7",
+      "row": "1"
+    },
+    {
+      "id": "criterion_2",
+      "name": "Criterion 2",
+      "class": "criterion",
+      "col": "9",
+      "row": "1"
+    },
+    {
+      "id": "criterion_4",
+      "name": "Criterion 4",
+      "class": "criterion",
+      "col": "11",
+      "row": "1"
+    },
+    {
+      "id": "criterion_3",
+      "name": "Criterion 3",
+      "class": "criterion",
+      "col": "10",
+      "row": "1"
+    },
+    {
+      "id": "criterion_5",
+      "name": "Criterion 5",
+      "class": "criterion",
+      "col": "9",
+      "row": "2"
+    }
+  ],
+  "form_values": {
+    "mod-q3-procedure": "standard",
+    "mod-q4-distance": "precise",
+    "mod-q5-distance-format": "interval",
+    "mod-q6-z": "precise",
+    "mod-q7-z-format": "interval",
+    "mod-q8-prob": "no",
+    "mod-q11-output": "single",
+    "mod-q12-unit": "fixed",
+    "zmin-1": "2.5088",
+    "zmax-1": "2.7037",
+    "zmin-2": "1.8169",
+    "zmax-2": "1.9851",
+    "zmin-3": "1.1978",
+    "zmax-3": "1.4096",
+    "w-value": "2",
+    "sampling-size-input": "20000",
+    "opt-inconsistency-suggestions": "3",
+    "opt-enable-dictatorship": false,
+    "opt-enable-minweight": false,
+    "opt-minweight-value": "0"
+  }
+}
