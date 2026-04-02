@@ -1,53 +1,98 @@
-﻿# Determining the Weights of Criteria Using the Revised Simos' Procedure
+﻿# Modular SRF Weight Elicitation Tool
+
+Browser-based software for criteria-weight elicitation with the standalone Modular SRF framework and the main predefined SRF variants.
 
 **Author:** River Huang ([river.huang@psi.ch](mailto:river.huang@psi.ch))  
-**Date:** January 15, 2026
+**Developed for:** Laboratory for Energy Systems Analysis (LEA), Paul Scherrer Institute (PSI)
 
 ## Overview
-This browser-based application replicates the revised Simos' method for weight elicitation, as described in the following paper:
+This project provides an interactive deck-of-cards interface for eliciting criteria weights in multi-criteria decision aiding. It supports:
 
-> Figueira, J., & Roy, B. (2002). Determining the weights of criteria in the ELECTRE type methods with a revised Simos' procedure. *European Journal of Operational Research, 139*(2), 317-326. [doi:10.1016/s0377-2217(01)00370-8](https://www.sciencedirect.com/science/article/pii/S0377221701003708)
+- the standalone **Modular SRF** framework
+- predefined SRF methods such as **SRF**, **SRF-II**, **Robust SRF**, **WAP**, **Imprecise SRF**, **Belief-degree Imprecise SRF**, and **HFL-SRF**
+- variability analysis with **sampling distributions**, **extreme scenarios**, **ASI diagnostics**, and **PCA maps**
+- export/import workflows for **JSON configurations** and **XLSX results**
 
-It supports the predefined SRF family together with the standalone Modular SRF framework, including variability analysis with feasible-region sampling, extreme-scenario exploration, ASI diagnostics, PCA maps, and XLSX export of detailed variability tables.
+## References
+The current modular architecture is based on:
 
-## Installation and Usage
-1. **Create a virtual environment** and install the dependencies:
-    ```bash
-    python -m venv venv
-    .\venv\Scripts\activate  # For Windows
-    source venv/bin/activate  # For macOS/Linux
-    pip install -r requirements.txt
-    ```
+> Huang, R., Kadzinski, M., Figueira, J. R., Corrente, S., Siskos, E., and Burgherr, P. (2026). A Modular Simos-Roy-Figueira framework for tailored weight elicitation in multi-criteria decision aiding. *Expert Systems With Applications, 311*, 131315. https://doi.org/10.1016/j.eswa.2026.131315
 
-2. **Launch the Flask server** using the following command:
-    ```bash
-    python -m flask --app simos_method run --port 8000
-    ```
+## Key Features
+- Interactive drag-and-drop card arrangement
+- Modular questionnaire for assembling SRF configurations
+- Support for precise, interval, probabilistic, and HFL-style inputs
+- Optional robustness constraints such as minimum-weight and anti-dictatorship rules
+- Configurable sampling count for variability analysis, with default `200`
+- Uniform hit-and-run sampling for continuous feasible regions
+- Dedicated extreme-scenario heatmap and PCA visualization
+- Calculation progress reporting during heavier runs
+
+## Quick Start
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/cx7388/modular-srf.git
+   cd modular-srf
+   ```
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv venv
+   .\venv\Scripts\activate
+   ```
+   On macOS/Linux:
+   ```bash
+   source venv/bin/activate
+   ```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Run the Flask app:
+   ```bash
+   python -m flask --app simos_method run --port 8000
+   ```
+5. Open:
+   ```text
+   http://localhost:8000
+   ```
+
+## Requirements
+- Python 3.9 or newer
+- A modern browser
+- Local installation of the dependencies in [requirements.txt](requirements.txt)
 
 ## Documentation
-- Main manual: [USER_MANUAL.md](USER_MANUAL.md)
+- Main user guide: [USER_MANUAL.md](USER_MANUAL.md)
 - Technical details: [USER_MANUAL.md#11-technical-details](USER_MANUAL.md#11-technical-details)
 
 ## Project Layout
-- `simos_method/__init__.py`: Flask routes, request parsing, deck preprocessing, and JSON responses
-- `simos_method/static/python/srf_methods.py`: core SRF calculations, variability analysis, and inconsistency detection
+- `simos_method/__init__.py`: Flask routes, request parsing, preprocessing, and JSON responses
+- `simos_method/static/python/srf_methods.py`: SRF calculations, modular resolution, variability analysis, and inconsistency detection
+- `simos_method/static/python/freeopt.py`: free-solver compatibility layer used instead of direct `gurobipy`
 - `simos_method/static/python/utils.py`: rounding, ASI, and PCA helpers
-- `simos_method/static/python/freeopt.py`: compatibility shim for the free optimization solver stack
-- `simos_method/static/js/main.js`: page-level UI behavior and import/export helpers
+- `simos_method/static/js/main.js`: import/export and general page behavior
 - `simos_method/static/js/cardUtils.js`: drag-and-drop card logic
-- `simos_method/static/js/uiUtils.js`: dynamic method inputs and modular questionnaire behavior
-- `simos_method/static/js/backend.js`: frontend payload assembly and `/calculate` request handling
-- `simos_method/static/js/results.js`: result table, sampling distribution, extreme-scenario heatmap, and PCA visualizations
+- `simos_method/static/js/uiUtils.js`: method-specific inputs and modular questionnaire behavior
+- `simos_method/static/js/backend.js`: request assembly and `/calculate` handling
+- `simos_method/static/js/results.js`: results table and Plotly visualizations
+
+## Runtime Data Files
+During calculations the app writes temporary JSON files under `simos_method/static/data/`:
+
+- `srf_samples.json`
+- `srf_extreme_scenarios.json`
+- `pca_output.json`
+- `srf_export_payload.json`
+- `calculation_progress.json`
+
+These files are regenerated as needed for frontend visualizations and export.
 
 ## Development Notes
-- The frontend serializes method-specific inputs in `simos_method/static/js/backend.js`, and the backend normalizes them again in `simos_method/__init__.py`. Keep both sides aligned when changing payload shapes.
-- Core optimization behavior is centralized in `simos_method/static/python/srf_methods.py`; most method additions or constraint changes eventually pass through that file.
-- Variability runs use a configurable sampling count (default `200`). Continuous models use hit-and-run sampling targeting the uniform distribution over the feasible region.
-- Runtime plot/export/progress data is written to:
-  - `simos_method/static/data/srf_samples.json`
-  - `simos_method/static/data/srf_extreme_scenarios.json`
-  - `simos_method/static/data/pca_output.json`
-  - `simos_method/static/data/srf_export_payload.json`
-  - `simos_method/static/data/calculation_progress.json`
+- Keep frontend and backend payload handling aligned when changing inputs:
+  - [backend.js](simos_method/static/js/backend.js)
+  - [__init__.py](simos_method/__init__.py)
+- Core solver/model behavior is centralized in [srf_methods.py](simos_method/static/python/srf_methods.py).
+- The free solver shim in [freeopt.py](simos_method/static/python/freeopt.py) includes compatibility handling for different PuLP environments.
 
-
+## License
+See [LICENSE](LICENSE).
