@@ -47,9 +47,19 @@ Use this tool when you need to:
 - **Export Results**: Download results to Excel (XLSX) format
 - **No Installation Required**: Runs entirely in your web browser
 
+### 1.4 Online Version
+
+The tool is also available online and can be used without local installation:
+
+```text
+https://mcda-srf.psi.ch/
+```
+
 ---
 
 ## 2. Installation
+
+Local installation is only needed if you want to run or modify the software on your own machine. For regular use, you can open the online version at https://mcda-srf.psi.ch/.
 
 ### 2.1 System Requirements
 

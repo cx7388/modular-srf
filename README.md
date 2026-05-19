@@ -13,6 +13,13 @@ This project provides an interactive deck-of-cards interface for eliciting crite
 - variability analysis with **sampling distributions**, **extreme scenarios**, **ASI diagnostics**, and **PCA maps**
 - export/import workflows for **JSON configurations** and **XLSX results**
 
+## Online Version
+You can use the hosted online version without installing the software locally:
+
+```text
+https://mcda-srf.psi.ch/
+```
+
 ## References
 The current modular architecture is based on:
 
