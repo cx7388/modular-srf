@@ -11,6 +11,180 @@
 let criteria_counter = 0;
 let white_counter = 0;
 
+
+function resetCardCounters() {
+    criteria_counter = 0;
+    white_counter = 0;
+}
+
+
+function syncCardCountersFromDropZone() {
+    const criterionIds = Array.from(document.querySelectorAll('.drop-zone .card.criterion'))
+        .map(card => /^criterion_(\d+)$/.exec(card.id))
+        .filter(Boolean)
+        .map(match => parseInt(match[1], 10));
+    const whiteIds = Array.from(document.querySelectorAll('.drop-zone .card.white'))
+        .map(card => /^white_card_(\d+)$/.exec(card.id))
+        .filter(Boolean)
+        .map(match => parseInt(match[1], 10));
+
+    criteria_counter = criterionIds.length ? Math.max(...criterionIds) : 0;
+    white_counter = whiteIds.length ? Math.max(...whiteIds) : 0;
+}
+
+
+function getCardGridColumn(card) {
+    return parseInt(card?.style?.gridColumnStart, 10);
+}
+
+
+function getCardGridRow(card) {
+    return parseInt(card?.style?.gridRowStart, 10);
+}
+
+
+function getDropZoneGridMetrics(dropZone = document.querySelector('.drop-zone')) {
+    const container = document.querySelector('.drop-zone-container');
+    const computedStyle = window.getComputedStyle(dropZone);
+    const firstColumn = computedStyle.getPropertyValue('grid-template-columns').split(' ')[0];
+    const columnWidth = parseFloat(firstColumn) || 80;
+    const gap = parseFloat(computedStyle.getPropertyValue('column-gap'))
+        || parseFloat(computedStyle.getPropertyValue('gap'))
+        || 0;
+    const paddingLeft = parseFloat(computedStyle.getPropertyValue('padding-left')) || 0;
+    const paddingRight = parseFloat(computedStyle.getPropertyValue('padding-right')) || 0;
+    const containerWidth = Math.max(1, container?.clientWidth || dropZone.clientWidth || 1);
+    const availableWidth = Math.max(1, containerWidth - paddingLeft - paddingRight);
+    const visibleColumnCount = Math.max(
+        1,
+        Math.floor((availableWidth + gap) / (columnWidth + gap))
+    );
+
+    return {
+        columnWidth,
+        gap,
+        paddingLeft,
+        paddingRight,
+        containerWidth,
+        visibleColumnCount
+    };
+}
+
+
+function resizeDropZoneToContent(dropZone = document.querySelector('.drop-zone')) {
+    if (!dropZone) return;
+
+    const ranksContainer = document.querySelector('.ranks-container');
+    const cards = Array.from(dropZone.querySelectorAll('.card'));
+    if (cards.length === 0) {
+        dropZone.style.minWidth = '100%';
+        if (ranksContainer) ranksContainer.style.minWidth = '100%';
+        return;
+    }
+
+    const finiteColumns = cards
+        .map(getCardGridColumn)
+        .filter(Number.isInteger);
+    if (finiteColumns.length === 0) {
+        dropZone.style.minWidth = '100%';
+        if (ranksContainer) ranksContainer.style.minWidth = '100%';
+        return;
+    }
+
+    const maxColumn = Math.max(...finiteColumns);
+    const {
+        columnWidth,
+        gap,
+        paddingLeft,
+        paddingRight,
+        containerWidth
+    } = getDropZoneGridMetrics(dropZone);
+    const requiredWidth = paddingLeft + paddingRight + maxColumn * columnWidth + Math.max(0, maxColumn - 1) * gap;
+    const minWidthPercent = Math.max(100, (requiredWidth / containerWidth) * 100);
+
+    dropZone.style.minWidth = `${minWidthPercent}%`;
+    if (ranksContainer) {
+        ranksContainer.style.minWidth = dropZone.style.minWidth;
+    }
+}
+
+
+function compactDropZoneColumns(dropZone = document.querySelector('.drop-zone')) {
+    if (!dropZone) return false;
+
+    const cards = Array.from(dropZone.querySelectorAll('.card'));
+    const columns = Array.from(new Set(
+        cards
+            .map(getCardGridColumn)
+            .filter(Number.isInteger)
+    )).sort((a, b) => a - b);
+
+    let changed = false;
+    const {visibleColumnCount} = getDropZoneGridMetrics(dropZone);
+    const startColumn = Math.max(1, Math.floor((visibleColumnCount - columns.length) / 2) + 1);
+    const columnMap = new Map(columns.map((oldColumn, index) => [oldColumn, startColumn + index]));
+    cards.forEach(card => {
+        const oldColumn = getCardGridColumn(card);
+        if (!columnMap.has(oldColumn)) return;
+        const newColumn = columnMap.get(oldColumn);
+        if (oldColumn !== newColumn) {
+            card.style.gridColumnStart = newColumn;
+            changed = true;
+        }
+    });
+
+    resizeDropZoneToContent(dropZone);
+    return changed;
+}
+
+
+function removeOuterWhiteCardsFromDropZone(dropZone = document.querySelector('.drop-zone')) {
+    if (!dropZone) return 0;
+
+    const criterionColumns = Array.from(dropZone.querySelectorAll('.card.criterion'))
+        .map(getCardGridColumn)
+        .filter(Number.isInteger);
+    if (criterionColumns.length === 0) return 0;
+
+    const minCriterionColumn = Math.min(...criterionColumns);
+    const maxCriterionColumn = Math.max(...criterionColumns);
+    const outerWhiteCards = Array.from(dropZone.querySelectorAll('.card.white'))
+        .filter(card => {
+            const column = getCardGridColumn(card);
+            return Number.isInteger(column)
+                && (column < minCriterionColumn || column > maxCriterionColumn);
+        });
+
+    outerWhiteCards.forEach(card => card.remove());
+    return outerWhiteCards.length;
+}
+
+
+function normalizeDropZoneLayout(options = {}) {
+    const {
+        removeOuterWhiteCards = false,
+        compactColumns = true
+    } = options;
+    const dropZone = document.querySelector('.drop-zone');
+    if (!dropZone) {
+        return {
+            removedOuterWhiteCards: 0,
+            compacted: false
+        };
+    }
+
+    const removedOuterWhiteCards = removeOuterWhiteCards
+        ? removeOuterWhiteCardsFromDropZone(dropZone)
+        : 0;
+    const compacted = compactColumns ? compactDropZoneColumns(dropZone) : false;
+    syncCardCountersFromDropZone();
+
+    return {
+        removedOuterWhiteCards,
+        compacted
+    };
+}
+
 function getMethodContextForWhiteCards() {
     const selectedMethod = document.getElementById('srf_method')?.value || '';
     const modularOptions = selectedMethod === 'modular_srf'
@@ -238,5 +412,6 @@ function deleteCard(event) {
         return;
     }
     card.remove();
+    normalizeDropZoneLayout({compactColumns: true});
     updateGridState();  // perform necessary layout adjustments and UI updates
 }

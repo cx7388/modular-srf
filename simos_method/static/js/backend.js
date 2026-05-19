@@ -402,6 +402,16 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
         setFigureCardVisibility('extreme-panel', false);
         setFigureCardVisibility('pca-panel', false);
     }
+    if (typeof normalizeDropZoneLayout === 'function') {
+        const cleanup = normalizeDropZoneLayout({
+            removeOuterWhiteCards: true,
+            compactColumns: true
+        });
+        if ((cleanup.removedOuterWhiteCards > 0 || cleanup.compacted)
+            && typeof updateGridState === 'function') {
+            updateGridState();
+        }
+    }
 
     // Declare variables for user inputs (arrangement of cards, z value, and required precision)
     const dropZone = document.querySelector('.drop-zone');

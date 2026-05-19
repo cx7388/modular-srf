@@ -27,13 +27,13 @@
         "full_name": "Imprecise SRF",
         "short_name": "Imprecise SRF",
         "doi_link": "10.1016/j.omega.2016.11.008",
-        "methodology": "<ol><li>Rank criteria and insert blank cards to identify relevant gaps between successive ex aequo groups.</li><li>For each relevant gap, provide an interval [e<sub>r</sub><sup>min</sup>, e<sub>r</sub><sup>max</sup>] for the number of blank cards.</li><li>Provide an interval [z<sup>min</sup>, z<sup>max</sup>] for the global ratio between the most and least important groups, and choose precision w.</li><li>The imprecise SRF model solves the interval-constrained problem and returns normalized representative weights.</li></ol>"
+        "methodology": "<ol><li>Rank criteria and identify the relevant gaps between successive ex aequo groups.</li><li>For each relevant gap, provide an interval [e<sub>r</sub><sup>min</sup>, e<sub>r</sub><sup>max</sup>] for the number of blank cards.</li><li>Provide an interval [z<sup>min</sup>, z<sup>max</sup>] for the global ratio between the most and least important groups, and choose precision w.</li><li>The imprecise SRF model solves the interval-constrained problem and returns normalized representative weights.</li></ol>"
     },
     "belief_degree_imprecise_srf": {
         "full_name": "Belief-degree Imprecise SRF",
         "short_name": "Belief-degree Imprecise SRF",
         "doi_link": "10.1080/01605682.2022.2035271",
-        "methodology": "<ol><li>Rank criteria and define the relevant successive-rank gaps.</li><li>For each relevant gap, provide one or more pairs (e<sub>r</sub>, &beta;<sub>r</sub>); probabilities for the same gap must sum to 1.</li><li>Provide one or more pairs (z, &beta;) for the global ratio, with total probability equal to 1, and choose precision w.</li><li>The belief-degree imprecise SRF model aggregates these probabilistic inputs and returns normalized criteria weights with robustness diagnostics.</li></ol>"
+        "methodology": "<ol><li>Rank criteria and define the relevant successive-rank gaps.</li><li>For each relevant gap, provide one or more pairs (e<sub>r</sub>, &beta;<sub>r</sub>): e<sub>r</sub> is a candidate number of blank cards for that gap and &beta;<sub>r</sub> is its belief degree/probability mass. Probabilities for the same gap must sum to 1.</li><li>Provide one or more pairs (z, &beta;) for the global ratio, where z is the ratio between the most and least important groups and &beta; is the belief degree assigned to that z value. The total probability must equal 1.</li><li>Choose precision w. The belief-degree imprecise SRF model aggregates these probabilistic inputs and returns normalized criteria weights with robustness diagnostics.</li></ol>"
     },
     "hfl_srf": {
         "full_name": "Hesitant Fuzzy Linguistic (HFL)-SRF",
@@ -45,7 +45,7 @@
         "full_name": "Modular Simos-Roy-Figueira (SRF)",
         "short_name": "Modular SRF",
         "doi_link": "10.1016/j.eswa.2026.131315",
-        "methodology": "<ol><li>Use the modular questionnaire to choose procedural, informational, normative, and analytical components.</li><li>Select the elicitation mechanism: standard deck, zero-criterion (SRF-II), or direct-ratio (WAP).</li><li>Define how uncertainty is represented (precise, interval, fuzzy/HFL, belief-degree probabilities) for rank gaps and ratio information.</li><li>Optionally activate anti-dictatorship and/or minimum-weight requirements.</li><li>Choose single-vector output or variability analysis, with fixed/dynamic unit weight and extreme/sampling analysis modes.</li><li>The app assembles the selected components into one SRF optimization model and computes the corresponding weights and diagnostics.</li></ol>"
+        "methodology": "<ol><li>Use the modular questionnaire to choose procedural, informational, normative, and analytical components.</li><li>Select the elicitation mechanism: standard deck, zero-criterion (SRF-II), or direct-ratio (WAP).</li><li>Define how uncertainty is represented (precise, interval, fuzzy/HFL, belief-degree probabilities) for rank gaps and ratio information.</li><li>Optionally activate anti-dictatorship and/or minimum-weight requirements.</li><li>Choose single-vector output or variability analysis. Unit weight C translates one blank-card unit into a weight difference between successive ranks: fixed C uses one common scale for all gaps, while dynamic C allows gap-specific scales when supported by the selected modular configuration.</li><li>The app assembles the selected components into one SRF optimization model and computes the corresponding weights and diagnostics.</li></ol>"
     }
 }
 

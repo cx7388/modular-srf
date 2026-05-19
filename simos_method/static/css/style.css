@@ -250,7 +250,7 @@ main li {
 /* Rank indicators below cards */
 .ranks-container {
     display: grid;
-    justify-content: right;
+    justify-content: left;
     grid-template-columns: repeat(auto-fill, 80px);
     gap: 12px;
     position: absolute;
@@ -647,6 +647,31 @@ main li {
     margin: 0.35rem 0;
 }
 
+.inline-help-popover {
+    margin-left: 0.25rem;
+    vertical-align: middle;
+}
+
+.inline-help-popover .info-popover-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.1rem;
+    height: 1.1rem;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.inline-help-popover .info-popover-content {
+    left: 0;
+    right: auto;
+    width: min(24rem, calc(100vw - 2rem));
+    max-width: calc(100vw - 2rem);
+}
+
 .results-figure-header .info-popover {
     position: static;
 }
@@ -663,6 +688,17 @@ main li {
     left: 0;
     right: auto;
     width: min(40rem, calc(100vw - 3rem));
+}
+
+.export-xlsx-popover {
+    margin-left: 0.4rem;
+}
+
+.export-xlsx-popover .info-popover-content {
+    left: 0;
+    right: auto;
+    width: min(30rem, calc(100vw - 2rem));
+    max-width: calc(100vw - 2rem);
 }
 
 /* Results table */

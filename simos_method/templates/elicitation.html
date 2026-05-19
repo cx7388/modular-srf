@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Modular SRF Weight Elicitation Tool</title>
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260336') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260519-unit-c-short') }}">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -126,7 +126,7 @@
                 </label>
                 <input type="number" id="z-value" name="z-value"
                        class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                       step=0.5  min=1.5 max=1000 value=6.5
+                       step=0.5  min=1.5 max=1000 value=5.0
                        placeholder="Enter a value">
             </div>
 
@@ -161,6 +161,12 @@
             <button class="download-button" id="downloadButton" onclick="exportToXLSX()">
                 <i class="fa-solid fa-file-export"></i> Export to XLSX
             </button>
+            <span class="info-popover export-xlsx-popover">
+                <button type="button" class="info-popover-trigger" aria-label="What the XLSX export contains">XLSX contents</button>
+                <span class="info-popover-content">
+                    The workbook always includes Criteria Weights and an Export Info sheet. Variability-oriented methods also add detail sheets when available, such as Sampling Results with stochastic feasible weight samples and Extreme Scenarios with min/max feasible weight cases.
+                </span>
+            </span>
         </div>
 
         <!-- Results -->
@@ -261,11 +267,11 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
 
-    <script src="{{ url_for('static', filename='js/main.js', v='20260327') }}"></script>
-    <script src="{{ url_for('static', filename='js/cardUtils.js', v='20260301') }}"></script>
-    <script src="{{ url_for('static', filename='js/results.js', v='20260403') }}"></script>
-    <script src="{{ url_for('static', filename='js/backend.js', v='20260333') }}"></script>
-    <script src="{{ url_for('static', filename='js/uiUtils.js', v='20260335') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js', v='20260519') }}"></script>
+    <script src="{{ url_for('static', filename='js/cardUtils.js', v='20260519-center') }}"></script>
+    <script src="{{ url_for('static', filename='js/results.js', v='20260519-xlsx') }}"></script>
+    <script src="{{ url_for('static', filename='js/backend.js', v='20260519') }}"></script>
+    <script src="{{ url_for('static', filename='js/uiUtils.js', v='20260519-unit-c-short') }}"></script>
 
     <script>updateGridState()</script>
     <script>updateSimosMethodInfo(document.getElementById("srf_method").value)</script>

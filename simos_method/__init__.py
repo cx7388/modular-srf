@@ -198,6 +198,116 @@ def postprocess_dropzone(simos_calc_results, weight_decimals=1):
     return simos_calc_results
 
 
+def _safe_float(value):
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(numeric_value):
+        return None
+    return numeric_value
+
+
+def _collect_interval_bound_issues(z_value, e_value):
+    """
+    Finds direct interval inconsistencies before the solver is called.
+    """
+    issues = []
+
+    def add_issue(issue_id, label, lower_value, upper_value):
+        lower = _safe_float(lower_value)
+        upper = _safe_float(upper_value)
+        if lower is None or upper is None or lower <= upper:
+            return
+        issues.append({
+            'issue_id': issue_id,
+            'label': label,
+            'lower': lower,
+            'upper': upper
+        })
+
+    def rank_sort_key(rank):
+        return (0, int(rank)) if str(rank).isdigit() else (1, str(rank))
+
+    def next_rank_label(rank):
+        return int(rank) + 1 if str(rank).isdigit() else "?"
+
+    if isinstance(z_value, dict):
+        if 'zmin' in z_value and 'zmax' in z_value:
+            add_issue('z_interval', 'global z interval', z_value.get('zmin'), z_value.get('zmax'))
+        if 'emin' in z_value and 'emax' in z_value:
+            add_issue('z_hfl_interval', 'global z term interval', z_value.get('emin'), z_value.get('emax'))
+        z_rank_keys = {
+            key.split('_', 1)[1]
+            for key in z_value
+            if key.startswith('zmin_') and f"zmax_{key.split('_', 1)[1]}" in z_value
+        }
+        for rank in sorted(z_rank_keys, key=rank_sort_key):
+            add_issue(
+                f'z_successive_{rank}',
+                f'successive z interval for rank pair {rank}-{next_rank_label(rank)}',
+                z_value.get(f'zmin_{rank}'),
+                z_value.get(f'zmax_{rank}')
+            )
+
+    if isinstance(e_value, dict):
+        e_rank_keys = {
+            key.split('_', 1)[1]
+            for key in e_value
+            if key.startswith('emin_') and f"emax_{key.split('_', 1)[1]}" in e_value
+        }
+        for rank in sorted(e_rank_keys, key=rank_sort_key):
+            label = 'zero-criterion e0 interval' if str(rank) == '0' else f'blank-card interval for rank gap {rank}->{next_rank_label(rank)}'
+            add_issue(
+                f'e_gap_{rank}',
+                label,
+                e_value.get(f'emin_{rank}'),
+                e_value.get(f'emax_{rank}')
+            )
+
+        r_rank_keys = {
+            key.split('_', 1)[1]
+            for key in e_value
+            if key.startswith('rmin_') and f"rmax_{key.split('_', 1)[1]}" in e_value
+        }
+        for rank in sorted(r_rank_keys, key=rank_sort_key):
+            label = 'zero-criterion e0 term interval' if str(rank) == '0' else f'HFL term interval for rank gap {rank}->{next_rank_label(rank)}'
+            add_issue(
+                f'hfl_gap_{rank}',
+                label,
+                e_value.get(f'rmin_{rank}'),
+                e_value.get(f'rmax_{rank}')
+            )
+
+    return issues
+
+
+def _interval_inconsistency_response(issues, requested_suggestions):
+    suggestions = []
+    for issue in issues[:requested_suggestions]:
+        suggestions.append({
+            'suggestion_id': len(suggestions) + 1,
+            'minimal_changes': 1,
+            'recommendations': [{
+                'issue_id': issue['issue_id'],
+                'direction': 'revise',
+                'recommendation': (
+                    f"Revise {issue['label']} so min <= max "
+                    f"(currently {issue['lower']} > {issue['upper']})."
+                )
+            }]
+        })
+
+    return {
+        'detected': True,
+        'message': 'Some interval inputs are inconsistent because a minimum value is greater than its maximum value.',
+        'requested_suggestions': requested_suggestions,
+        'returned_suggestions': len(suggestions),
+        'minimal_inconsistency_size': 1,
+        'suggestions': suggestions
+    }
+
+
 @app.route('/')
 def index():
     """Renders the landing page."""
@@ -430,6 +540,21 @@ def calculate():
                     e_value = {}
             else:
                 e_value = int(data.get('eValue', []))
+
+        interval_issues = _collect_interval_bound_issues(z_value, e_value)
+        if interval_issues:
+            srf_methods_module.finish_calculation_progress(
+                'Calculation finished with interval inconsistency recommendations.',
+                status='completed'
+            )
+            return jsonify({
+                'crit_weights': '[]',
+                'asi_value': None,
+                'inconsistency': _interval_inconsistency_response(
+                    interval_issues,
+                    inconsistency_suggestions
+                )
+            })
         cards_arrangement = pd.DataFrame(data.get('cards_arrangement', []))
         required_columns = {'col', 'class', 'id'}
         if cards_arrangement.empty:

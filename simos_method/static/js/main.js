@@ -24,6 +24,9 @@ document.querySelector('.clear-button').addEventListener('click', () => {
     document.querySelectorAll('.drop-zone .card').forEach(card => {
         card.remove();
     });
+    if (typeof resetCardCounters === 'function') {
+        resetCardCounters();
+    }
 
     // Reset drop zone width to default
     document.querySelector(".drop-zone").style.minWidth = '100%';
@@ -186,7 +189,6 @@ document.querySelector('.import-button').addEventListener('click', () => {
                 // Backward-compatible import: plain card array.
                 if (Array.isArray(data)) {
                     restoreCards(data);
-                    updateGridState();
                     return;
                 }
 
@@ -198,7 +200,6 @@ document.querySelector('.import-button').addEventListener('click', () => {
                 if (arrangement.length) {
                     restoreCards(arrangement);
                 }
-                updateGridState();
 
                 const methodSelect = document.getElementById('srf_method');
                 const importedMethod = data.srf_method;
@@ -234,12 +235,17 @@ function restoreCards(arrangement) {
     dropZone.innerHTML = ''; // Clear existing cards
 
     arrangement.forEach(card => {
-        var newCard = createNewCard(document.querySelector(`.card.${card.class}`))
+        const cardClass = card.class === 'white' ? 'white' : 'criterion';
+        const template = document.querySelector(`.card.${cardClass}`);
+        if (!template) return;
+        var newCard = createNewCard(template)
 
-        newCard.id = card.id;
-        newCard.textContent = card.name;
-        newCard.style.gridRowStart = card.row;
-        newCard.style.gridColumnStart = card.col;
+        if (card.id) {
+            newCard.id = card.id;
+        }
+        newCard.textContent = card.name || (cardClass === 'white' ? 'Blank card' : 'Criterion');
+        newCard.style.gridRowStart = parseInt(card.row, 10) || 1;
+        newCard.style.gridColumnStart = parseInt(card.col, 10) || 1;
 
         // Add delete button to card
         var deleteButton = Object.assign(document.createElement('button'), {
@@ -252,6 +258,13 @@ function restoreCards(arrangement) {
 
         dropZone.appendChild(newCard);
     });
+
+    if (typeof normalizeDropZoneLayout === 'function') {
+        normalizeDropZoneLayout({compactColumns: true});
+    } else if (typeof syncCardCountersFromDropZone === 'function') {
+        syncCardCountersFromDropZone();
+    }
+    updateGridState();
 }
 
 

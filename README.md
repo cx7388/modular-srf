@@ -87,6 +87,9 @@ During calculations the app writes temporary JSON files under `simos_method/stat
 
 These files are regenerated as needed for frontend visualizations and export.
 
+## XLSX Export Contents
+The XLSX export always includes the displayed `Criteria Weights` sheet and an `Export Info` sheet describing the workbook. Variability-oriented methods may also include `Sampling Results` with feasible stochastic sample weights and `Extreme Scenarios` with criterion-wise min/max feasible cases.
+
 ## Development Notes
 - Keep frontend and backend payload handling aligned when changing inputs:
   - [backend.js](simos_method/static/js/backend.js)

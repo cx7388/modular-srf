@@ -4,9 +4,8 @@ async function exportToXLSX(filename = 'simos_method_results.xlsx') {
         return;
     }
 
-    // create a new workbook with the main criteria-weight worksheet
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(simos_calc_results), "Criteria Weights");
+    const detailSections = [];
 
     try {
         const response = await fetch('/data/srf_export_payload.json', { cache: 'no-store' });
@@ -28,12 +27,56 @@ async function exportToXLSX(filename = 'simos_method_results.xlsx') {
                     ? section.sheet_name.trim()
                     : 'Variability Details';
                 const sheetName = rawSheetName.slice(0, 31);
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(records), sheetName);
+                detailSections.push({
+                    sheetName,
+                    mode: section?.mode || 'variability',
+                    source: section?.source || '',
+                    records
+                });
             });
         }
     } catch (error) {
         console.error('Error loading export payload:', error);
     }
+
+    const selectedMethodLabel = document.getElementById('srf_method')?.selectedOptions?.[0]?.textContent
+        || document.getElementById('srf_method')?.value
+        || 'Selected SRF method';
+    const exportInfoRows = [
+        {
+            Sheet: 'Criteria Weights',
+            Contents: 'Displayed calculation table: criteria, ranks, selected weights, and method-specific summary columns when available.',
+            Notes: `Generated for ${selectedMethodLabel}.`
+        }
+    ];
+    detailSections.forEach(section => {
+        const isSampling = section.mode === 'sampling';
+        const isExtreme = section.mode === 'extreme';
+        exportInfoRows.push({
+            Sheet: section.sheetName,
+            Contents: isSampling
+                ? 'Stochastic feasible-solution samples; each row is one sampled weight vector and each criterion column is a weight.'
+                : isExtreme
+                    ? 'Extreme feasible scenarios; rows minimize or maximize criterion weights to describe the feasible range.'
+                    : 'Additional variability details produced by the selected method.',
+            Notes: [
+                section.source ? `Source: ${section.source}.` : '',
+                `${section.records.length} rows exported.`
+            ].filter(Boolean).join(' ')
+        });
+    });
+    if (detailSections.length === 0) {
+        exportInfoRows.push({
+            Sheet: 'Method-specific details',
+            Contents: 'No sampling or extreme-scenario detail sheet was produced for this calculation.',
+            Notes: 'Single-vector methods usually export only the displayed criteria-weight table.'
+        });
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(exportInfoRows), "Export Info");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(simos_calc_results), "Criteria Weights");
+    detailSections.forEach(section => {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(section.records), section.sheetName);
+    });
 
     // generate an Excel file from the workbook and trigger download
     XLSX.writeFile(wb, filename);

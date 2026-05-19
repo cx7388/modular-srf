@@ -4,6 +4,12 @@ const HFL_Z_TERM_MIN = 1;
 const HFL_Z_TERM_MAX = 10;
 const HFL_CARD_TERM_MIN = 1;
 const HFL_CARD_TERM_MAX = 5;
+const DEFAULT_PRECISE_Z = 5.0;
+const DEFAULT_Z_MIN = 5.0;
+const DEFAULT_Z_MAX = 7.0;
+const DEFAULT_PRECISE_Z_TEXT = DEFAULT_PRECISE_Z.toFixed(1);
+const DEFAULT_Z_MIN_TEXT = DEFAULT_Z_MIN.toFixed(1);
+const DEFAULT_Z_MAX_TEXT = DEFAULT_Z_MAX.toFixed(1);
 
 const HFL_Z_TERM_DEFS = [
     { value: 1, label: 'very low contrast', fuzzy: [1, 1, 2] },
@@ -184,6 +190,16 @@ function buildOptionalConstraintsHtml() {
                 </div>
             </div>
         </div>
+    `;
+}
+
+
+function buildInlineHelpPopover(helpText, ariaLabel = 'More information') {
+    return `
+        <span class="info-popover inline-help-popover">
+            <button type="button" class="info-popover-trigger" aria-label="${ariaLabel}">?</button>
+            <span class="info-popover-content">${helpText}</span>
+        </span>
     `;
 }
 
@@ -682,6 +698,10 @@ function ensureModularQuestionnairePanel() {
                         <option value="fixed" selected>Fixed</option>
                         <option value="dynamic">Dynamic</option>
                     </select>
+                    ${buildInlineHelpPopover(
+                        `The unit weight C is the minimum weight step between two consecutively ranked criteria groups. If e<sub>s</sub> blank cards are placed between rank R<sub>s</sub> and R<sub>s+1</sub>, the fixed-C formulation sets the weight difference to (e<sub>s</sub> + 1) &middot; C. C is not entered directly by the user; it is determined by the optimization model together with the gap constraints, the global ratio z, and the normalization rule that all criterion weights sum to 1.`,
+                        'Explain unit weight C'
+                    )}
                 </div>
 
             </div>
@@ -824,7 +844,7 @@ function addBeliefRow(scope, rank = null) {
 
     const idx = getNextBeliefRowIndex(scope, rank);
     const defaultValue = scope === 'z'
-        ? 6.5
+        ? DEFAULT_PRECISE_Z_TEXT
         : (rank === 0
             ? 4
             : Math.max(0, parseInt(String(white_cards[rank] ?? 0), 10)));
@@ -1173,7 +1193,10 @@ function validateModularMethodInputs(modularOptions) {
     summaryLines.push(`<li><strong>Probability:</strong> ${opts.probability}</li>`);
     summaryLines.push(`<li><strong>Output type:</strong> ${opts.output_type}</li>`);
     if (!isDirect) {
-        summaryLines.push(`<li><strong>Unit weight:</strong> ${opts.unit_weight}</li>`);
+        const unitWeightDescription = opts.unit_weight === 'dynamic'
+            ? 'dynamic - gap scales may vary where the model supports it'
+            : 'fixed - one common blank-card unit scale C';
+        summaryLines.push(`<li><strong>Unit weight:</strong> ${unitWeightDescription}</li>`);
     }
 
     const summaryHtml = `
@@ -1236,6 +1259,81 @@ function validateHflMethodInputs() {
     `;
 
     return { valid: errors.length === 0, summaryHtml };
+}
+
+
+function validateIntervalMethodInputs(methodForInputs) {
+    const errors = [];
+    const summaryLines = [];
+
+    if (methodForInputs === 'wap') {
+        if (num_ranks < 2) {
+            errors.push('WAP requires at least two ranks.');
+        }
+
+        for (let rank = 1; rank < num_ranks; rank++) {
+            const zMin = parseFloat(document.getElementById(`zmin-${rank}`)?.value);
+            const zMax = parseFloat(document.getElementById(`zmax-${rank}`)?.value);
+            if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) {
+                errors.push(`Rank pair ${rank}-${rank + 1} requires valid z_min and z_max values.`);
+                continue;
+            }
+            if (zMin <= 1 || zMax <= 1) {
+                errors.push(`Rank pair ${rank}-${rank + 1} requires z values > 1.`);
+            }
+            if (zMin > zMax) {
+                errors.push(`Rank pair ${rank}-${rank + 1} requires z_min <= z_max.`);
+            }
+            summaryLines.push(`<li><strong>Rank ${rank + 1} / Rank ${rank}:</strong> z in [${zMin}, ${zMax}]</li>`);
+        }
+    } else if (methodForInputs === 'imprecise_srf') {
+        const zMin = parseFloat(document.getElementById('zmin')?.value);
+        const zMax = parseFloat(document.getElementById('zmax')?.value);
+        if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) {
+            errors.push('Global z interval requires valid min and max values.');
+        } else {
+            if (zMin <= 1 || zMax <= 1) {
+                errors.push('Global z interval bounds must be > 1.');
+            }
+            if (zMin > zMax) {
+                errors.push('Global z interval requires min <= max.');
+            }
+            summaryLines.push(`<li><strong>Global z:</strong> [${zMin}, ${zMax}]</li>`);
+        }
+
+        for (let rank = 1; rank < num_ranks; rank++) {
+            const eMin = parseFloat(document.getElementById(`emin-${rank}`)?.value);
+            const eMax = parseFloat(document.getElementById(`emax-${rank}`)?.value);
+            if (!Number.isFinite(eMin) || !Number.isFinite(eMax)) {
+                errors.push(`Gap ${rank}->${rank + 1} requires valid min and max values.`);
+                continue;
+            }
+            if (!Number.isInteger(eMin) || !Number.isInteger(eMax)) {
+                errors.push(`Gap ${rank}->${rank + 1} interval bounds must be integers.`);
+            }
+            if (eMin < 0 || eMax < 0) {
+                errors.push(`Gap ${rank}->${rank + 1} interval bounds must be >= 0.`);
+            }
+            if (eMin > eMax) {
+                errors.push(`Gap ${rank}->${rank + 1} requires min <= max.`);
+            }
+            summaryLines.push(`<li><strong>Gap ${rank}->${rank + 1}:</strong> e in [${eMin}, ${eMax}]</li>`);
+        }
+    }
+
+    const title = methodForInputs === 'wap' ? 'WAP Interval Summary' : 'Imprecise SRF Interval Summary';
+    const okText = methodForInputs === 'wap'
+        ? 'All successive ratio intervals are valid.'
+        : 'All z and blank-card intervals are valid.';
+    const summaryHtml = `
+        <div style="font-weight: 600; margin-bottom: 0.25rem;">${title}</div>
+        <ul style="margin: 0.1rem 0 0.25rem 1rem; padding: 0;">
+            ${summaryLines.join('')}
+        </ul>
+        ${errors.length ? `<div style="color:#b54708;">${errors.join('<br>')}</div>` : `<div style="color:#2f7d32;">${okText}</div>`}
+    `;
+
+    return {valid: errors.length === 0, summaryHtml};
 }
 
 
@@ -1344,6 +1442,18 @@ function validateMethodInputsAndToggleRun() {
         return;
     }
 
+    if (methodForInputs === 'imprecise_srf' || methodForInputs === 'wap') {
+        const state = validateIntervalMethodInputs(methodForInputs);
+        const isValid = state.valid && optionalState.valid && samplingState.valid;
+        const modularSummary = selectedMethod === 'modular_srf'
+            ? `<div style="font-weight:600; margin-bottom:0.25rem;">Modular profile: ${methodForInputs}</div>`
+            : '';
+        setMethodSummary(`${modularSummary}${state.summaryHtml}${samplingState.summaryHtml}${optionalState.summaryHtml}`, !isValid);
+        runButton.disabled = !isValid;
+        runButton.style.opacity = isValid ? '1' : '0.6';
+        return;
+    }
+
     if (selectedMethod === 'modular_srf' || optionalState.anyEnabled || !optionalState.valid || samplingState.summaryHtml) {
         const modularSummary = selectedMethod === 'modular_srf'
             ? `
@@ -1410,7 +1520,11 @@ function enforceMethodSpecificCardRules() {
     }
 
     if (noBlankCards) {
-        document.querySelectorAll('.drop-zone .card.white').forEach(card => card.remove());
+        const whiteCards = document.querySelectorAll('.drop-zone .card.white');
+        whiteCards.forEach(card => card.remove());
+        if (whiteCards.length > 0 && typeof normalizeDropZoneLayout === 'function') {
+            normalizeDropZoneLayout({compactColumns: true});
+        }
     }
 }
 
@@ -1657,7 +1771,7 @@ function renderZInputs() {
                     <label style="width: 16rem; border-bottom: 1px dashed #e0e0e0;">${i}.   Rank ${i + 1} / Rank ${i}</label>
                     <input type="number" name="zexact-${i}" id="zexact-${i}" 
                            class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                           step="0.1" min="1.1" max="100" value="1.7"
+                           step="0.1" min="1.1" max="100" value="${DEFAULT_PRECISE_Z_TEXT}"
                            placeholder="z">
                 </div>
                 `;
@@ -1666,10 +1780,10 @@ function renderZInputs() {
                 <div style="display: flex; justify-content: flex-end; margin-left: auto; gap: 0.5rem;">
                     <label style="width: 16rem; border-bottom: 1px dashed #e0e0e0;">${i}.   Rank ${i + 1} / Rank ${i}</label>
                     <select name="wap-hfl-zmin-${i}" id="wap-hfl-zmin-${i}" class="labelmaxmin form-control">
-                        ${buildHflTermOptions(HFL_Z_TERM_DEFS, 4)}
+                        ${buildHflTermOptions(HFL_Z_TERM_DEFS, DEFAULT_Z_MIN)}
                     </select>
                     <select name="wap-hfl-zmax-${i}" id="wap-hfl-zmax-${i}" class="labelmaxmin form-control">
-                        ${buildHflTermOptions(HFL_Z_TERM_DEFS, 7)}
+                        ${buildHflTermOptions(HFL_Z_TERM_DEFS, DEFAULT_Z_MAX)}
                     </select>
                 </div>
                 `;
@@ -1679,11 +1793,11 @@ function renderZInputs() {
                     <label style="width: 16rem; border-bottom: 1px dashed #e0e0e0;">${i}.   Rank ${i + 1} / Rank ${i}</label>
                     <input type="number" name="zmin-${i}" id="zmin-${i}" 
                            class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                           step="0.1" min="1.1" max="100" value="1.3"
+                           step="0.1" min="1.1" max="100" value="${DEFAULT_Z_MIN_TEXT}"
                            placeholder="zmin">
                     <input type="number" name="zmax-${i}" id="zmax-${i}" 
                            class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                           step="0.1" min="1.1" max="100" value="2.1"
+                           step="0.1" min="1.1" max="100" value="${DEFAULT_Z_MAX_TEXT}"
                            placeholder="zmax">
                 </div>
                 `;
@@ -1702,7 +1816,7 @@ function renderZInputs() {
                     <div style="display: flex; flex-direction: column; align-items: center">
                         <input type="number" id="zmin" name="z-value-min"
                                class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                               step=0.5  min=1.5 max=1000 value=5.5
+                               step=0.5  min=1.5 max=1000 value="${DEFAULT_Z_MIN_TEXT}"
                                placeholder="Enter a value">
                         <span style="font-size: 0.75rem;">min</span>
                     </div>
@@ -1710,7 +1824,7 @@ function renderZInputs() {
                     <div style="display: flex; flex-direction: column; align-items: center">
                         <input type="number" id="zmax" name="z-value-max"
                                class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                               step=0.5  min=1.5 max=1000 value=7.5
+                               step=0.5  min=1.5 max=1000 value="${DEFAULT_Z_MAX_TEXT}"
                                placeholder="Enter a value">   
                         <span style="font-size: 0.75rem;">max</span>
                     </div>                             
@@ -1719,8 +1833,10 @@ function renderZInputs() {
         zContainer.innerHTML = `
             <label for="z-value">
                 Global ratio z belief distribution
-                <span title="Belief degree beta is your confidence mass for each z candidate. Betas must sum to 1."
-                      style="cursor: help; color: #5a6372;">&#9432;</span>
+                ${buildInlineHelpPopover(
+                    'z is a candidate global ratio between the most and least important rank groups. beta is the belief degree or probability mass assigned to that z candidate; all z betas must sum to 1.',
+                    'Explain z and beta'
+                )}
             </label>
 
             <div style="display: flex; flex-direction: column; gap: 0.25rem; border: 1px dashed #d3d9e2; border-radius: 0.45rem; padding: 0.55rem;">
@@ -1730,8 +1846,8 @@ function renderZInputs() {
                     <div></div>
                 </div>
                 <div id="belief-z-rows">
-                    ${buildBeliefRowHtml('z', 1, 5.5, 0.4)}
-                    ${buildBeliefRowHtml('z', 2, 7.5, 0.6)}
+                    ${buildBeliefRowHtml('z', 1, DEFAULT_Z_MIN_TEXT, 0.5)}
+                    ${buildBeliefRowHtml('z', 2, DEFAULT_Z_MAX_TEXT, 0.5)}
                 </div>
                 <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap: wrap;">
                     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addBeliefRow('z')"
@@ -1751,8 +1867,8 @@ function renderZInputs() {
             </div>
         `;
     } else if (zMode === 'hfl_srf') {
-        const eMinDefault = 4;
-        const eMaxDefault = 7;
+        const eMinDefault = DEFAULT_Z_MIN;
+        const eMaxDefault = DEFAULT_Z_MAX;
         zContainer.innerHTML = `<label for="hfl-emin">
                     Choose the hesitant fuzzy interval for global importance contrast z (term scale 1 to 10):
                 </label>
@@ -1780,7 +1896,7 @@ function renderZInputs() {
                 </label>
                 <input type="number" id="z-value" name="z-value"
                        class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                       step=0.5  min=1.5 max=1000 value=6.5
+                       step=0.5  min=1.5 max=1000 value="${DEFAULT_PRECISE_Z_TEXT}"
                        placeholder="Enter a value">`;
     }
 
@@ -1862,6 +1978,10 @@ function renderEInputs() {
         <div style="margin-bottom:0.55rem;">
             <label for="e0-value">
                 Zero-criterion anchor: number of blank cards from least-important rank to zero criterion (e<sub>0</sub>)
+                ${buildInlineHelpPopover(
+                    'e0 is the number of blank cards between the least-important rank and a hypothetical zero-importance criterion. It anchors the SRF-II scale without requiring a global z ratio.',
+                    'Explain e0'
+                )}
             </label>
             <input type="number" id="e0-value" name="e0-value"
                    class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
@@ -1873,6 +1993,10 @@ function renderEInputs() {
         <div style="margin-bottom:0.55rem;">
             <label>
                 Zero-criterion anchor interval e<sub>0</sub> (blank cards from least-important rank to zero criterion)
+                ${buildInlineHelpPopover(
+                    'The e0 interval gives the admissible minimum and maximum number of blank cards between the least-important rank and the zero-importance criterion.',
+                    'Explain e0 interval'
+                )}
             </label>
             <div style="display:flex; gap:0.35rem; align-items:flex-start; max-width:24rem;">
                 <div style="display:flex; flex-direction:column; align-items:center;">
@@ -1896,6 +2020,10 @@ function renderEInputs() {
         <div style="margin-bottom:0.55rem;">
             <label>
                 Zero-criterion anchor HFL interval e<sub>0</sub> (card-term scale 1 to 5)
+                ${buildInlineHelpPopover(
+                    'The e0 HFL interval expresses the zero-criterion anchor with linguistic card-gap terms. The lower term should not exceed the upper term.',
+                    'Explain e0 HFL interval'
+                )}
             </label>
             <div style="display:flex; gap:0.35rem; align-items:flex-start; max-width:24rem;">
                 <div style="display:flex; flex-direction:column; align-items:center;">
@@ -1917,8 +2045,10 @@ function renderEInputs() {
         <div style="margin-bottom:0.55rem;">
             <label>
                 Zero-criterion anchor belief distribution for e<sub>0</sub>
-                <span title="Define belief degree for e0 values. Betas must sum to 1."
-                      style="cursor: help; color: #5a6372;">&#9432;</span>
+                ${buildInlineHelpPopover(
+                    'Each row gives a possible e0 value and beta, its belief degree or probability mass. The e0 betas must sum to 1.',
+                    'Explain e0 belief distribution'
+                )}
             </label>
             <div style="display:flex; flex-direction:column; gap:0.25rem; border:1px dashed #d3d9e2; border-radius:0.45rem; padding:0.55rem;">
                 <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.4rem; font-size: 0.82rem; color: #5a6372;">
@@ -2012,8 +2142,10 @@ function renderEInputs() {
     } else if (eMode === 'belief_degree_imprecise_srf') {
         let html = `${includeZeroE0 ? buildZeroE0Block() : ''}<label style="margin-top: 0.8rem; margin-bottom: 0.5rem">
             Belief distributions for blank cards between ranks
-            <span title="For each rank gap, define a belief distribution over the number of blank cards. Betas must sum to 1."
-                  style="cursor: help; color: #5a6372;">&#9432;</span>
+            ${buildInlineHelpPopover(
+                'For each rank gap, e is a possible number of blank cards and beta is its belief degree or probability mass. Betas for each gap must sum to 1.',
+                'Explain rank-gap belief distributions'
+            )}
         </label>`;
 
         html += `<div style="max-height: 24rem; overflow-y: auto; border: 1px dashed #d3d9e2; border-radius: 0.45rem; padding: 0.55rem;">`;
@@ -2107,6 +2239,10 @@ function renderEInputs() {
     } else {
         eContainer.innerHTML = `<label for="e0-value">
                     How many blank cards separate the least important ex aequo from a "zero criterion" (e<sub>0</sub> value)?
+                    ${buildInlineHelpPopover(
+                        'e0 is the number of blank cards between the least-important rank and a hypothetical zero-importance criterion. It anchors the SRF-II scale without requiring a global z ratio.',
+                        'Explain e0'
+                    )}
                 </label>
                 <input type="number" id="e0-value" name="e0-value"
                        class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
@@ -2145,7 +2281,7 @@ function addPair(index, paramType) {
     newEInput.name = (paramType === 'e-value') ? `e-value-${index}-${newIndex}` : `z-value-${newIndex}`;
     newEInput.id = (paramType === 'e-value') ? `e-value-${index}-${newIndex}` : `z-value-${newIndex}`;
     newEInput.className = "labelmaxmin form-control";
-    newEInput.value = (paramType === 'e-value') ? "1" : "6.5";
+    newEInput.value = (paramType === 'e-value') ? "1" : DEFAULT_PRECISE_Z_TEXT;
     newEInput.step = (paramType === 'e-value') ? "1" : "0.5";
     newEInput.min = (paramType === 'e-value') ? "0" : "1.5";
     newEInput.max = (paramType === 'e-value') ? "100": "1000";
