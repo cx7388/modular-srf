@@ -1,3 +1,181 @@
+const PREFERRED_CRITERIA_WEIGHT_COLUMNS = Object.freeze([
+    'Rank [r]',
+    'Criteria',
+    'Weights [%]',
+    'Center weight [k_center]',
+    'Min weight [k_min]',
+    'Max weight [k_max]'
+]);
+const CSV_UTF8_BOM = '\uFEFF';
+
+
+function isCriteriaWeightSummaryRow(row) {
+    return String(row?.['Rank [r]'] ?? '').trim().toLowerCase() === 'sum';
+}
+
+
+function buildCriteriaWeightExportData(results) {
+    const sourceRows = Array.isArray(results)
+        ? results.filter(row => row && typeof row === 'object' && !Array.isArray(row))
+        : [];
+    const summaryRow = sourceRows.find(isCriteriaWeightSummaryRow) || null;
+    const criterionRows = sourceRows.filter(row => !isCriteriaWeightSummaryRow(row));
+    const availableColumns = new Set();
+
+    criterionRows.forEach(row => {
+        Object.keys(row).forEach(column => availableColumns.add(column));
+    });
+
+    const columns = PREFERRED_CRITERIA_WEIGHT_COLUMNS.filter(column => availableColumns.has(column));
+    criterionRows.forEach(row => {
+        Object.keys(row).forEach(column => {
+            if (!columns.includes(column)) {
+                columns.push(column);
+            }
+        });
+    });
+
+    const criteriaWeights = criterionRows.map(row => Object.fromEntries(
+        columns.map(column => [
+            column,
+            Object.prototype.hasOwnProperty.call(row, column) ? row[column] : null
+        ])
+    ));
+
+    const summary = {};
+    if (summaryRow) {
+        columns.forEach(column => {
+            if (column === 'Rank [r]' || column === 'Criteria') return;
+            const rawValue = summaryRow[column];
+            if (rawValue === null || rawValue === undefined || rawValue === '') return;
+            const numericValue = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+            if (Number.isFinite(numericValue)) {
+                summary[column] = numericValue;
+            }
+        });
+    }
+
+    return {columns, criteriaWeights, summary};
+}
+
+
+function getCriteriaWeightExportDataOrAlert() {
+    if (!Array.isArray(simos_calc_results) || simos_calc_results.length === 0) {
+        alert('Please run a calculation before exporting results.');
+        return null;
+    }
+
+    const exportData = buildCriteriaWeightExportData(simos_calc_results);
+    if (exportData.criteriaWeights.length === 0) {
+        alert('No calculated criteria weights are available to export.');
+        return null;
+    }
+    return exportData;
+}
+
+
+function getResultExportContext() {
+    const storedContext = typeof lastCalculationExportContext !== 'undefined'
+        ? lastCalculationExportContext
+        : null;
+    const methodSelect = document.getElementById('srf_method');
+    const fallbackMethodId = methodSelect?.value || 'unknown';
+    const fallbackMethodLabel = methodSelect?.selectedOptions?.[0]?.textContent?.trim()
+        || fallbackMethodId;
+    const precisionRaw = storedContext?.weight_decimal_places
+        ?? document.getElementById('w-value')?.value
+        ?? document.getElementById('w_value')?.value;
+    const parsedPrecision = Number.parseInt(precisionRaw, 10);
+
+    return {
+        method: {
+            id: storedContext?.method?.id || fallbackMethodId,
+            label: storedContext?.method?.label || fallbackMethodLabel
+        },
+        weight_decimal_places: Number.isFinite(parsedPrecision)
+            ? Math.max(0, parsedPrecision)
+            : 1
+    };
+}
+
+
+function encodeCsvCell(value) {
+    if (value === null || value === undefined) return '';
+    let text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    if (typeof value === 'string'
+        && (/^[\t\r\n]/.test(text) || /^\s*[=+\-@]/.test(text))) {
+        text = `'${text}`;
+    }
+    return /[",\r\n]/.test(text)
+        ? `"${text.replace(/"/g, '""')}"`
+        : text;
+}
+
+
+function serializeCriteriaWeightsToCSV(exportData) {
+    const {columns, criteriaWeights} = exportData;
+    const lines = [
+        columns.map(encodeCsvCell).join(','),
+        ...criteriaWeights.map(row => (
+            columns.map(column => encodeCsvCell(row[column])).join(',')
+        ))
+    ];
+    return `${lines.join('\r\n')}\r\n`;
+}
+
+
+function buildCriteriaWeightsJsonPayload(exportData, context, exportedAt = new Date().toISOString()) {
+    return {
+        format: 'srf-criteria-weights-v1',
+        exported_at: exportedAt,
+        method: {...context.method},
+        weight_decimal_places: context.weight_decimal_places,
+        weight_unit: 'percent',
+        criteria_count: exportData.criteriaWeights.length,
+        columns: [...exportData.columns],
+        summary: {...exportData.summary},
+        criteria_weights: exportData.criteriaWeights.map(row => ({...row}))
+    };
+}
+
+
+function downloadTextFile(content, filename, mimeType) {
+    const blob = new Blob([content], {type: mimeType});
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
+
+function exportToCSV(filename = 'simos_method_criteria_weights.csv') {
+    const exportData = getCriteriaWeightExportDataOrAlert();
+    if (!exportData) return;
+    downloadTextFile(
+        `${CSV_UTF8_BOM}${serializeCriteriaWeightsToCSV(exportData)}`,
+        filename,
+        'text/csv;charset=utf-8'
+    );
+}
+
+
+function exportToJSON(filename = 'simos_method_criteria_weights.json') {
+    const exportData = getCriteriaWeightExportDataOrAlert();
+    if (!exportData) return;
+    const payload = buildCriteriaWeightsJsonPayload(exportData, getResultExportContext());
+    downloadTextFile(
+        `${JSON.stringify(payload, null, 2)}\n`,
+        filename,
+        'application/json;charset=utf-8'
+    );
+}
+
+
 async function exportToXLSX(filename = 'simos_method_results.xlsx') {
     if (!Array.isArray(simos_calc_results) || simos_calc_results.length === 0) {
         alert('Please run a calculation before exporting results.');
@@ -39,9 +217,7 @@ async function exportToXLSX(filename = 'simos_method_results.xlsx') {
         console.error('Error loading export payload:', error);
     }
 
-    const selectedMethodLabel = document.getElementById('srf_method')?.selectedOptions?.[0]?.textContent
-        || document.getElementById('srf_method')?.value
-        || 'Selected SRF method';
+    const selectedMethodLabel = getResultExportContext().method.label || 'Selected SRF method';
     const exportInfoRows = [
         {
             Sheet: 'Criteria Weights',

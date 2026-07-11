@@ -1397,6 +1397,11 @@ function validateMethodInputsAndToggleRun() {
         : selectedMethod;
     const runButton = document.querySelector('.calculate-button');
     if (!runButton) return;
+    if (typeof calculationInProgress !== 'undefined' && calculationInProgress) {
+        runButton.disabled = true;
+        runButton.style.opacity = '0.6';
+        return;
+    }
     syncOptionalConstraintPanels();
     updateModularQuestionnaireVisibility();
     updateSamplingSizeVisibility();

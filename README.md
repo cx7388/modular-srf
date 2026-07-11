@@ -11,7 +11,7 @@ This project provides an interactive deck-of-cards interface for eliciting crite
 - the standalone **Modular SRF** framework
 - predefined SRF methods such as **SRF**, **SRF-II**, **Robust SRF**, **WAP**, **Imprecise SRF**, **Belief-degree Imprecise SRF**, and **HFL-SRF**
 - variability analysis with **sampling distributions**, **extreme scenarios**, **ASI diagnostics**, and **PCA maps**
-- export/import workflows for **JSON configurations** and **XLSX results**
+- export/import workflows for **JSON configurations** and **XLSX, CSV, or JSON results**
 
 ## Online Version
 You can use the hosted online version without installing the software locally:
@@ -27,6 +27,7 @@ The current modular architecture is based on:
 
 ## Key Features
 - Interactive drag-and-drop card arrangement
+- Ready-to-download example configurations in the elicitation interface
 - Modular questionnaire for assembling SRF configurations
 - Support for precise, interval, probabilistic, and HFL-style inputs
 - Optional robustness constraints such as minimum-weight and anti-dictatorship rules
@@ -81,7 +82,7 @@ The current modular architecture is based on:
 - `simos_method/static/js/cardUtils.js`: drag-and-drop card logic
 - `simos_method/static/js/uiUtils.js`: method-specific inputs and modular questionnaire behavior
 - `simos_method/static/js/backend.js`: request assembly and `/calculate` handling
-- `simos_method/static/js/results.js`: results table and Plotly visualizations
+- `simos_method/static/js/results.js`: XLSX/CSV/JSON result exports, results table, and Plotly visualizations
 
 ## Runtime Data Files
 During calculations the app writes temporary JSON files under `simos_method/static/data/`:
@@ -94,8 +95,8 @@ During calculations the app writes temporary JSON files under `simos_method/stat
 
 These files are regenerated as needed for frontend visualizations and export.
 
-## XLSX Export Contents
-The XLSX export always includes the displayed `Criteria Weights` sheet and an `Export Info` sheet describing the workbook. Variability-oriented methods may also include `Sampling Results` with feasible stochastic sample weights and `Extreme Scenarios` with criterion-wise min/max feasible cases.
+## Result Export Formats
+Calculated criteria weights can be exported as CSV, JSON, or XLSX. CSV contains one rectangular row per criterion for direct use in spreadsheets and analytical tools. JSON provides the same criterion records in a versioned payload with method, precision, column, and summary metadata. XLSX includes an `Export Info` sheet and the displayed `Criteria Weights` table; variability-oriented methods may also add `Sampling Results` and `Extreme Scenarios` detail sheets.
 
 ## Development Notes
 - Keep frontend and backend payload handling aligned when changing inputs:

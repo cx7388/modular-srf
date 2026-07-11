@@ -44,7 +44,7 @@ Use this tool when you need to:
 - **Real-Time Calculations**: Immediate weight computation and normalization
 - **Robustness Analysis**: ASI diagnostics, sampling distributions, extreme-scenario heatmaps, and PCA visualizations
 - **Import/Export**: Save and load configurations in JSON format
-- **Export Results**: Download results to Excel (XLSX) format
+- **Export Results**: Download criteria weights in XLSX, CSV, or JSON format
 - **No Installation Required**: Runs entirely in your web browser
 
 ### 1.4 Online Version
@@ -210,7 +210,9 @@ Select from 7 predefined SRF methods and the standalone Modular SRF framework:
 
 #### Action Buttons
 - **Calculate**: Compute the criteria weights
-- **Export to XLSX**: Download results to Excel
+- **Export XLSX**: Download a workbook containing the criteria-weight table and available detail sheets
+- **Export CSV**: Download one tabular row per criterion
+- **Export JSON**: Download criterion records with structured result metadata
 
 #### Results Section
 - Weight tables
@@ -553,7 +555,18 @@ Depending on the method, you may see additional statistics:
 - Parameter values (z, e0, w)
 - Additional method-specific settings
 
-### 8.2 Importing a Configuration
+### 8.2 Downloading an Example Configuration
+
+**Purpose**: Start from one of the ready-to-use configurations included with the application
+
+**Steps**:
+1. Click the **"Examples"** button above the card workspace
+2. Select an example to download its JSON configuration
+3. Click **"Import"** and select the downloaded file
+4. Review or modify the imported configuration
+5. Click **"Calculate"** to reproduce the example
+
+### 8.3 Importing a Configuration
 
 **Purpose**: Load a previously saved configuration
 
@@ -570,23 +583,23 @@ Depending on the method, you may see additional statistics:
 - Sharing configurations with colleagues
 - Version control of decision models
 
-### 8.3 Exporting Results to Excel
+### 8.4 Exporting Calculated Criteria Weights
 
-**Purpose**: Download calculation results for further analysis or reporting
+**Purpose**: Download calculated criteria weights for reporting or use in other decision-support and analytical tools
 
 **Steps**:
-1. After calculating weights, click **"Export to XLSX"**
-2. An Excel file will be downloaded
-3. Default filename: `srf_results_[timestamp].xlsx`
+1. Calculate the criteria weights
+2. Choose **"Export XLSX"**, **"Export CSV"**, or **"Export JSON"**
+3. The selected result file will be downloaded
 
-**What's Included**:
-- Sheet 1: Criteria Weights
-- Sheet 2: Sampling Results (if variability analysis is active)
-- Sheet 3: Extreme Scenarios (if variability analysis is active)
+**Available Formats**:
+- **CSV** (`simos_method_criteria_weights.csv`): A UTF-8 table with a byte-order mark and one row per criterion. The display-only Sum row is excluded so the file can be imported directly into spreadsheets, R, Python, and other data tools. For spreadsheet safety, an apostrophe is prefixed to text that begins like a formula; the JSON export preserves criterion labels exactly.
+- **JSON** (`simos_method_criteria_weights.json`): A versioned `srf-criteria-weights-v1` payload containing the criterion records, selected method, decimal precision, ordered columns, units, criterion count, and available summary totals.
+- **XLSX** (`simos_method_results.xlsx`): An Excel workbook containing `Export Info` and `Criteria Weights` sheets. Variability-oriented calculations also add `Sampling Results` and `Extreme Scenarios` sheets when those details are available.
 
-The additional variability sheets are omitted when no corresponding data is available.
+CSV and JSON contain the calculated criteria-weight records only. The richer variability-detail tables remain part of the XLSX export. All canonical result columns are preserved, including selected, center, minimum, maximum, and method-specific diagnostic columns when available.
 
-**File Format**: Microsoft Excel (.xlsx) format, compatible with Excel, LibreOffice, Google Sheets
+If no successful calculation is available, the application asks you to calculate the weights before exporting.
 
 ---
 
@@ -598,6 +611,7 @@ The additional variability sheets are omitted when no corresponding data is avai
 - HTML5, CSS3, JavaScript (ES6+)
 - Drag-and-drop API
 - Plotly.js for visualizations
+- Browser-native CSV and JSON serialization/downloads
 - XLSX.js for Excel export
 
 **Backend**:
@@ -619,7 +633,7 @@ The additional variability sheets are omitted when no corresponding data is avai
 - `simos_method/static/python/freeopt.py`: compatibility layer that maps the used subset of the `gurobipy` API to free solvers
 - `simos_method/static/js/uiUtils.js`: method-specific inputs and modular questionnaire behavior
 - `simos_method/static/js/backend.js`: browser-side payload serialization and POST `/calculate`
-- `simos_method/static/js/results.js`: results table plus sampling distribution, extreme-scenario heatmap, and PCA rendering
+- `simos_method/static/js/results.js`: XLSX/CSV/JSON result exports plus results-table and figure rendering
 
 **Request flow**:
 1. The browser collects the card arrangement and method-specific inputs.
@@ -678,8 +692,8 @@ The tool formulates **linear programming (LP)** problems:
 - `calculation_progress.json`: Cached progress payload for the active calculation
 
 **File Formats**:
-- Input/Output: JSON
-- Results Export: XLSX (Excel)
+- Configuration import/export: JSON
+- Results export: XLSX (Excel), CSV, and JSON
 
 **Browser Storage**:
 - No persistent storage in browser

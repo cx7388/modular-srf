@@ -32,7 +32,7 @@ Installation and Usage:
     python -m flask --app simos_method run --port 8000
 """
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file, Response
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file, Response, abort
 from pathlib import Path
 import os
 import pandas as pd
@@ -43,6 +43,18 @@ from simos_method.static.python.freeopt import warmup_solver_backend
 
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+EXAMPLES_DIR = PROJECT_ROOT / 'Examples'
+EXAMPLE_CONFIGS = (
+    ('Example_Predefined SRF.json', 'Predefined SRF (paper example)'),
+    ('Example_Modular SRF.json', 'Modular SRF (paper example)'),
+    ('Original SRF.json', 'Original SRF'),
+    ('SRF-II.json', 'SRF-II'),
+    ('Robust SRF.json', 'Robust SRF'),
+    ('WAP.json', 'Assessment Through Prioritization (WAP)'),
+    ('Imprecise SRF.json', 'Imprecise SRF'),
+    ('Belief-degree Imprecise SRF.json', 'Belief-degree Imprecise SRF'),
+)
 DATA_DIR = Path(__file__).resolve().parent / 'static' / 'data'
 SRF_SAMPLES_PATH = DATA_DIR / 'srf_samples.json'
 SRF_EXTREME_SCENARIOS_PATH = DATA_DIR / 'srf_extreme_scenarios.json'
@@ -59,6 +71,15 @@ def _serve_json_or_default(path_obj, default_payload):
     if path_obj.exists():
         return send_file(path_obj, mimetype='application/json', max_age=0)
     return Response(default_payload, mimetype='application/json')
+
+
+def _available_example_configs():
+    """Returns the repository's importable example configurations."""
+    return [
+        {'filename': filename, 'label': label}
+        for filename, label in EXAMPLE_CONFIGS
+        if (EXAMPLES_DIR / filename).is_file()
+    ]
 
 
 def preprocess_dropzone(cards_arrangement):
@@ -317,7 +338,28 @@ def index():
 @app.route('/elicitation')
 def elicitation():
     """Renders the SRF elicitation page."""
-    return render_template('elicitation.html')
+    return render_template(
+        'elicitation.html',
+        example_configs=_available_example_configs()
+    )
+
+
+@app.route('/examples/<path:filename>')
+def download_example_config(filename):
+    """Downloads one of the importable example configurations."""
+    available_filenames = {
+        example['filename'] for example in _available_example_configs()
+    }
+    if filename not in available_filenames:
+        abort(404)
+
+    return send_file(
+        EXAMPLES_DIR / filename,
+        mimetype='application/json',
+        as_attachment=True,
+        download_name=filename,
+        max_age=0
+    )
 
 
 @app.route('/calculator')

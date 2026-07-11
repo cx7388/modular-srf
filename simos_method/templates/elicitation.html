@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Modular SRF Weight Elicitation Tool</title>
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260519-unit-c-short') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260711-result-exports') }}">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -96,8 +96,31 @@
 
         <!-- Drop zone container with drop zone, clear button, insert new column button and ranks of cards-->
         <div class="dz-container" style="position: relative;">
-            <div style="display: flex; width: 100%; justify-content: right">
+            <div class="configuration-actions">
                 <input type="file" id="importFile" accept=".json" style="display: none;">
+
+                {% if example_configs %}
+                <details class="example-config-menu">
+                    <summary class="example-config-button">
+                        <i class="fa-solid fa-file-arrow-down" aria-hidden="true"></i> Examples
+                    </summary>
+                    <div class="example-config-panel">
+                        <p>Download a ready-to-use configuration, then load it with <strong>Import</strong>.</p>
+                        <ul>
+                            {% for example in example_configs %}
+                            <li>
+                                <a href="{{ url_for('download_example_config', filename=example.filename) }}"
+                                   download="{{ example.filename }}">
+                                    <i class="fa-regular fa-file-code" aria-hidden="true"></i>
+                                    <span>{{ example.label }}</span>
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </details>
+                {% endif %}
+
                 <button class="import-button"><i class="fa-solid fa-download"></i> Import</button>
 
                 <button class="export-button"><i class="fa-solid fa-upload"></i> Export</button>
@@ -153,18 +176,28 @@
             </div>
         </div>
 
-        <!-- Calculate and download buttons -->
-        <div style="padding: 0.5rem 0;">
-            <button class="calculate-button">
-                <i class="fa-solid fa-calculator"></i> Calculate
+        <!-- Calculate and result export buttons -->
+        <div class="result-actions">
+            <button type="button" class="calculate-button">
+                <i class="fa-solid fa-calculator" aria-hidden="true"></i> Calculate
             </button>
-            <button class="download-button" id="downloadButton" onclick="exportToXLSX()">
-                <i class="fa-solid fa-file-export"></i> Export to XLSX
-            </button>
-            <span class="info-popover export-xlsx-popover">
-                <button type="button" class="info-popover-trigger" aria-label="What the XLSX export contains">XLSX contents</button>
+
+            <span class="result-export-buttons" role="group" aria-label="Export calculated criteria weights">
+                <button type="button" class="download-button" onclick="exportToXLSX()">
+                    <i class="fa-solid fa-file-excel" aria-hidden="true"></i> Export XLSX
+                </button>
+                <button type="button" class="download-button" onclick="exportToCSV()">
+                    <i class="fa-solid fa-file-csv" aria-hidden="true"></i> Export CSV
+                </button>
+                <button type="button" class="download-button" onclick="exportToJSON()">
+                    <i class="fa-solid fa-file-code" aria-hidden="true"></i> Export JSON
+                </button>
+            </span>
+
+            <span class="info-popover export-results-popover">
+                <button type="button" class="info-popover-trigger" aria-label="What each result export format contains">Export formats</button>
                 <span class="info-popover-content">
-                    The workbook always includes Criteria Weights and an Export Info sheet. Variability-oriented methods also add detail sheets when available, such as Sampling Results with stochastic feasible weight samples and Extreme Scenarios with min/max feasible weight cases.
+                    CSV contains one row per criterion. JSON contains the same records plus method, precision, column, and summary metadata. XLSX includes the displayed criteria-weight table, an Export Info sheet, and available variability details such as sampling results and extreme scenarios.
                 </span>
             </span>
         </div>
@@ -269,9 +302,9 @@
 
     <script src="{{ url_for('static', filename='js/main.js', v='20260519') }}"></script>
     <script src="{{ url_for('static', filename='js/cardUtils.js', v='20260519-center') }}"></script>
-    <script src="{{ url_for('static', filename='js/results.js', v='20260519-xlsx') }}"></script>
-    <script src="{{ url_for('static', filename='js/backend.js', v='20260519') }}"></script>
-    <script src="{{ url_for('static', filename='js/uiUtils.js', v='20260519-unit-c-short') }}"></script>
+    <script src="{{ url_for('static', filename='js/results.js', v='20260711-csv-json') }}"></script>
+    <script src="{{ url_for('static', filename='js/backend.js', v='20260711-result-context') }}"></script>
+    <script src="{{ url_for('static', filename='js/uiUtils.js', v='20260711-calculation-state') }}"></script>
 
     <script>updateGridState()</script>
     <script>updateSimosMethodInfo(document.getElementById("srf_method").value)</script>

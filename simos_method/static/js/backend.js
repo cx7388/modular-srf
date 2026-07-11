@@ -1,5 +1,8 @@
 let simos_calc_results = {};
 let asi_value = null;
+let lastCalculationExportContext = null;
+let calculationInProgress = false;
+let calculationRequestSequence = 0;
 let calculationProgressTimer = null;
 let calculationProgressRequestInFlight = false;
 
@@ -391,6 +394,8 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
     */
 
     // Before starting the calculation, remove tables with older results that may still be contained on the page
+    simos_calc_results = [];
+    lastCalculationExportContext = null;
     document.getElementById("asi_value").textContent = '';
     document.querySelectorAll('#results-container table').forEach(table => table.remove());
     clearInconsistencyReport();
@@ -432,6 +437,8 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
     const srf_method = document.getElementById('srf_method').value;
 
     const selectedMethod = document.getElementById("srf_method").value;
+    const selectedMethodLabel = document.getElementById('srf_method')?.selectedOptions?.[0]?.textContent?.trim()
+        || selectedMethod;
     const modularOptions = selectedMethod === 'modular_srf' && typeof collectModularOptionsFromDom === 'function'
         ? collectModularOptionsFromDom()
         : null;
@@ -741,10 +748,36 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
     if (missingZ || missingE || missingW) {
         alert('Please make sure to provide all input values.');
     } else {
+        const calculationRequestId = ++calculationRequestSequence;
+        calculationInProgress = true;
+        const calculateButton = document.querySelector('.calculate-button');
+        if (calculateButton) {
+            calculateButton.disabled = true;
+            calculateButton.setAttribute('aria-busy', 'true');
+        }
+
         // Start spinner
         target.style.display = 'block';
         spinner.spin(target);
         startCalculationProgressPolling();
+
+        const finishCalculationUi = () => {
+            if (calculationRequestId !== calculationRequestSequence) {
+                spinner.stop();
+                return false;
+            }
+            stopCalculationProgressPolling();
+            spinner.stop();
+            target.style.display = 'none';
+            calculationInProgress = false;
+            calculateButton?.removeAttribute('aria-busy');
+            if (typeof validateMethodInputsAndToggleRun === 'function') {
+                validateMethodInputsAndToggleRun();
+            } else if (calculateButton) {
+                calculateButton.disabled = false;
+            }
+            return true;
+        };
 
         fetch('/calculate', {
             method: 'POST',
@@ -773,17 +806,30 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
                 return payload;
             })
             .then(data => {
+                if (calculationRequestId !== calculationRequestSequence) {
+                    spinner.stop();
+                    return;
+                }
+
                 if (data?.inconsistency?.detected) {
                     renderInconsistencyReport(data.inconsistency);
-                    stopCalculationProgressPolling();
-                    spinner.stop();
-                    target.style.display = 'none';
+                    finishCalculationUi();
                     return;
                 }
 
                 // Display the calculation results to the user in a tabular form
                 simos_calc_results = JSON.parse(data.crit_weights);
                 asi_value = data.asi_value;
+                const parsedWeightDecimalPlaces = Number.parseInt(wValue, 10);
+                lastCalculationExportContext = {
+                    method: {
+                        id: selectedMethod,
+                        label: selectedMethodLabel
+                    },
+                    weight_decimal_places: Number.isFinite(parsedWeightDecimalPlaces)
+                        ? Math.max(0, parsedWeightDecimalPlaces)
+                        : 1
+                };
 
                 const distributionMethods = new Set([
                     'robust_srf',
@@ -809,19 +855,17 @@ document.querySelector('.calculate-button').addEventListener('click', () => {
                 plot_extreme_scenarios(noDistribution, container_id = 'extreme_plot');
                 plot_pca(noDistribution, container_id = 'pca_plot')
 
-                // Stop spinner
-                stopCalculationProgressPolling();
-                spinner.stop();
-                target.style.display = 'none';
+                finishCalculationUi();
             })
             .catch(error => {
+                if (calculationRequestId !== calculationRequestSequence) {
+                    spinner.stop();
+                    return;
+                }
                 console.error('Error:', error);
                 alert(error.message || 'Calculation failed. Please review your inputs and try again.');
 
-                // stop spinner
-                stopCalculationProgressPolling();
-                spinner.stop();
-                target.style.display = 'none';
+                finishCalculationUi();
             });
     }
 });

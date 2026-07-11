@@ -8,9 +8,9 @@ Each file is an `srf-elicitation-config` snapshot that can be loaded through the
 
 1. Launch the application.
 2. Open the elicitation page.
-3. Use the JSON import function.
-4. Select one of the files in this folder.
-5. Click `Calculate` to reproduce the corresponding case.
+3. Open the **Examples** menu above the card workspace and download a configuration.
+4. Use **Import** to load the downloaded JSON file.
+5. Click **Calculate** to reproduce the corresponding case.
 
 ## Example files
 
