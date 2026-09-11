@@ -1139,6 +1139,32 @@ def _persist_distribution_samples(cards_arrangement, samples_df):
     export_df.to_json(str(SRF_SAMPLES_PATH), orient='records')
 
 
+def _select_best_robustness_rule(robustness_rules):
+    """
+    Picks the (ASI, barycenter) pair of the robustness rule with the highest ASI.
+
+    A rule whose model is infeasible produces no scenarios at all, which surfaces
+    as an ASI of None and an empty barycenter. Such rules are skipped so they
+    neither break the comparison nor silently supply NaN weights. When no rule
+    survives, the feasible region is empty for every rule and the caller's
+    infeasibility handling takes over.
+    """
+    usable = [
+        (asi, barycenter)
+        for asi, barycenter in (robustness_rules or [])
+        if asi is not None
+        and barycenter is not None
+        and not pd.isna(barycenter).all()
+    ]
+    if not usable:
+        raise ValueError(
+            "No feasible solution found for any robustness rule. The requested "
+            "ratios cannot be satisfied by this ranking; please relax them."
+        )
+
+    return max(usable, key=lambda rule: rule[0])
+
+
 def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                   modular_options=None,
                   modular_profile=None,
@@ -1383,11 +1409,14 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                                                                  conditional_gap_milp=conditional_gap_milp,
                                                                  dynamic_unit_weight=modular_dynamic_unit)
 
-            robustness_rules = {
-                asi_srf_min_max: srf_min_max.mean() if srf_min_max is not None else None,
-                asi_srf_vertices: srf_vertices.mean() if srf_vertices is not None else None,
-                asi_srf_samples: srf_samples.mean() if srf_samples is not None else None
-            }
+            # Kept as a list of (ASI, barycenter) pairs rather than a dict keyed by
+            # ASI: rules that turn out infeasible all report ASI None, and two rules
+            # can legitimately tie, so ASI values do not make unique keys.
+            robustness_rules = [
+                (asi_srf_min_max, srf_min_max.mean() if srf_min_max is not None else None),
+                (asi_srf_vertices, srf_vertices.mean() if srf_vertices is not None else None),
+                (asi_srf_samples, srf_samples.mean() if srf_samples is not None else None)
+            ]
         else:
             # Modular runs may need either full variability outputs or only enough
             # samples to compute a representative center solution.
@@ -1519,11 +1548,14 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                 srf_samples = srf_vertices.copy()
 
             # Store ASI values and barycenters of each robustness rule.
-            robustness_rules = {
-                asi_srf_min_max: srf_min_max.mean() if srf_min_max is not None else None,
-                asi_srf_vertices: srf_vertices.mean() if srf_vertices is not None else None,
-                asi_srf_samples: srf_samples.mean() if srf_samples is not None else None
-            }
+            # Kept as a list of (ASI, barycenter) pairs rather than a dict keyed by
+            # ASI: rules that turn out infeasible all report ASI None, and two rules
+            # can legitimately tie, so ASI values do not make unique keys.
+            robustness_rules = [
+                (asi_srf_min_max, srf_min_max.mean() if srf_min_max is not None else None),
+                (asi_srf_vertices, srf_vertices.mean() if srf_vertices is not None else None),
+                (asi_srf_samples, srf_samples.mean() if srf_samples is not None else None)
+            ]
 
     """
     SRF Calculations
@@ -1535,8 +1567,8 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
         simos_calc_results['name'] = cards_arrangement['name']
 
         # Select the mean criteria weight based on the max ASI of the three methods.
-        asi_value = max(robustness_rules)
-        simos_calc_results['k_i'] = robustness_rules[asi_value]
+        asi_value, best_barycenter = _select_best_robustness_rule(robustness_rules)
+        simos_calc_results['k_i'] = best_barycenter
 
         if normalized:
             simos_calc_results['k_i'] = round_up_selected(simos_calc_results['k_i'], w_value, target_sum=100)
@@ -1614,8 +1646,8 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
         simos_calc_results['name'] = cards_arrangement['name']
 
         # Select the mean criteria weight based on the max ASI of the three methods
-        asi_value = max(robustness_rules)
-        simos_calc_results['k_i'] = robustness_rules[asi_value]
+        asi_value, best_barycenter = _select_best_robustness_rule(robustness_rules)
+        simos_calc_results['k_i'] = best_barycenter
 
         if normalized:
             simos_calc_results['k_i'] = round_up_selected(simos_calc_results['k_i'], w_value, target_sum=100)
