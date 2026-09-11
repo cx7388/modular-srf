@@ -2,7 +2,7 @@
 
 This folder contains importable JSON configurations for the SRF examples included in this project.
 
-Each file is an `srf-elicitation-config` snapshot that can be loaded through the application's import function. The examples are intended to reproduce published cases within this software environment, either from the original method papers or from the modular SRF paper underlying this project.
+Each file is an `srf-elicitation-config` snapshot that can be loaded through the application's import function. The examples are intended to reproduce published cases within this software environment, either from the original method papers or from the software and methodological papers underlying this project.
 
 ## How to use
 
@@ -33,6 +33,7 @@ Each file is an `srf-elicitation-config` snapshot that can be loaded through the
 
 ## Sources
 
+- Huang, R., Kadziński, M., Figueira, J. R., & Burgherr, P. (2026). *Modular SRF weight elicitation tool: Open-source software for tailored criteria weighting*. SoftwareX, 35, 102920. https://doi.org/10.1016/j.softx.2026.102920
 - Huang, R., Kadzinski, M., Figueira, J. R., Corrente, S., Siskos, E., & Burgherr, P. (2026). *A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria Decision Aiding*. Expert Systems with Applications, 311, 131315. https://doi.org/10.1016/j.eswa.2026.131315
 - Figueira, J., & Roy, B. (2002). *Determining the weights of criteria in the ELECTRE type methods with a revised Simos' procedure*. European Journal of Operational Research, 139(2), 317-326. https://doi.org/10.1016/S0377-2217(01)00370-8
 - Abastante, F., Corrente, S., Greco, S., Lami, I. M., & Mecca, B. (2022). *The introduction of the SRF-II method to compare hypothesis of adaptive reuse for an iconic historical building*. Operational Research, 22(3), 2397-2436. https://doi.org/10.1007/s12351-020-00611-4

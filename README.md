@@ -21,7 +21,11 @@ https://mcda-srf.psi.ch/
 ```
 
 ## References
-The current modular architecture is based on:
+If you use this software, please cite:
+
+> Huang, R., Kadziński, M., Figueira, J. R., and Burgherr, P. (2026). Modular SRF weight elicitation tool: Open-source software for tailored criteria weighting. *SoftwareX, 35*, 102920. https://doi.org/10.1016/j.softx.2026.102920
+
+The methodological framework is described in:
 
 > Huang, R., Kadzinski, M., Figueira, J. R., Corrente, S., Siskos, E., and Burgherr, P. (2026). A Modular Simos-Roy-Figueira framework for tailored weight elicitation in multi-criteria decision aiding. *Expert Systems With Applications, 311*, 131315. https://doi.org/10.1016/j.eswa.2026.131315
 

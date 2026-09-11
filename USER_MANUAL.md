@@ -769,27 +769,30 @@ Please cite this tool using:
 
 **APA Format**:
 ```
-Huang, R., Kadzinski, M., Figueira, J. R., Corrente, S., Siskos, E., & Burgherr, P. (2026). 
-A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria 
-Decision Aiding. Expert Systems with Applications, 311, 131315. 
-https://doi.org/10.1016/j.eswa.2026.131315
+Huang, R., Kadziński, M., Figueira, J. R., & Burgherr, P. (2026).
+Modular SRF weight elicitation tool: Open-source software for tailored criteria weighting.
+SoftwareX, 35, 102920. https://doi.org/10.1016/j.softx.2026.102920
 ```
 
 **BibTeX Format**:
 ```bibtex
-@article{huang2026modular,
-  title={A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria Decision Aiding},
-  author={Huang, River and Kadzi{\'n}ski, Mi{\l}osz and Figueira, Jos{\'e} Rui and Corrente, Salvatore and Siskos, Eleftherios and Burgherr, Peter},
-  journal={Expert Systems with Applications},
-  volume={311},
-  pages={131315},
+@article{huang2026modulartool,
+  title={Modular SRF weight elicitation tool: Open-source software for tailored criteria weighting},
+  author={Huang, River and Kadzi{\'n}ski, Mi{\l}osz and Figueira, Jos{\'e} Rui and Burgherr, Peter},
+  journal={SoftwareX},
+  volume={35},
+  pages={102920},
   year={2026},
   publisher={Elsevier},
-  doi={10.1016/j.eswa.2026.131315}
+  doi={10.1016/j.softx.2026.102920}
 }
 ```
 
-### 12.2 Method-Specific References
+### 12.2 Methodological Reference
+
+- Huang, R., Kadzinski, M., Figueira, J. R., Corrente, S., Siskos, E., & Burgherr, P. (2026). A Modular Simos-Roy-Figueira Framework for Tailored Weight Elicitation in Multi-Criteria Decision Aiding. *Expert Systems with Applications, 311*, 131315. https://doi.org/10.1016/j.eswa.2026.131315
+
+### 12.3 Method-Specific References
 
 **SRF (Original)**:
 - Figueira, J., & Roy, B. (2002). Determining the weights of criteria in the ELECTRE type methods with a revised Simos' procedure. *European Journal of Operational Research, 139*(2), 317-326. https://doi.org/10.1016/S0377-2217(01)00370-8

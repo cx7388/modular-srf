@@ -6,14 +6,19 @@ Date: January 15, 2025
 
 Overview:
 This browser-based application implements multiple SRF configurations
-for criteria weight elicitation using a modular architecture, as described
-in the following paper:
+for criteria weight elicitation. The software is described in:
+
+Huang, R., Kadziński, M., Figueira, J. R., and Burgherr, P. (2026).
+Modular SRF weight elicitation tool: Open-source software for tailored
+criteria weighting. SoftwareX, 35, 102920.
+doi:10.1016/j.softx.2026.102920
+
+The methodological framework is described in:
 
 Huang, R., Kadzinski, M., Figueira, J. R., Corrente, S., Siskos, E.,
 and Burgherr, P. (2026). A Modular Simos-Roy-Figueira framework for
-tailored weight elicitation in multi-criteria decision aiding.
-Expert Systems With Applications, 311, 131315.
-doi:10.1016/j.eswa.2026.131315
+tailored weight elicitation in multi-criteria decision aiding. Expert Systems
+With Applications, 311, 131315. doi:10.1016/j.eswa.2026.131315
 
 Features:
 - Interactive web interface for arranging criteria cards
@@ -344,7 +349,10 @@ def elicitation():
     )
 
 
-@app.route('/examples/<path:filename>')
+# NOTE: the URL prefix is deliberately NOT '/examples/'. The PSI reverse proxy
+# (F5 ASM) rejects any request under '/examples/' with a 403 block page, since
+# that path matches a well-known attack signature for sample-app directories.
+@app.route('/sample-configs/<path:filename>')
 def download_example_config(filename):
     """Downloads one of the importable example configurations."""
     available_filenames = {
