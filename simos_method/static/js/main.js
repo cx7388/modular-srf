@@ -379,13 +379,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
 /**
  * Enforces min/max limits on numeric input fields.
- * 
- * @param {Event} event - Input change event
+ *
+ * @param {Event} event - Input or change event
  */
 function enforceMinMaxLimits(event) {
-    let { max, min, value, step } = event.target;
-    value = Math.min(Math.max(parseFloat(value), parseFloat(min)), parseFloat(max));
-    
+    const input = event.target;
+
+    // Clamping on every keystroke rewrites partially typed numbers (e.g. "3."
+    // becomes "3"), so limits are only enforced once the edit is committed.
+    if (event.type === 'input') {
+        if (!input.dataset.limitsOnChange) {
+            input.dataset.limitsOnChange = 'true';
+            input.addEventListener('change', enforceMinMaxLimits);
+        }
+        return;
+    }
+
+    const parsed = parseFloat(input.value);
+    if (!Number.isFinite(parsed)) return;
+
+    let value = parsed;
+    if (input.min !== '') value = Math.max(value, parseFloat(input.min));
+    if (input.max !== '') value = Math.min(value, parseFloat(input.max));
+
     // Convert to integer if step is 1
-    event.target.value = step === 1 ? parseInt(value) : value;
+    if (parseFloat(input.step) === 1) value = Math.trunc(value);
+
+    if (value !== parsed) input.value = value;
 }

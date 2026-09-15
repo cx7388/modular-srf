@@ -39,7 +39,20 @@ EXPORT_PAYLOAD_PATH = DATA_DIR / 'srf_export_payload.json'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 INCONSISTENCY_BIG_M = 10_000.0
 INCONSISTENCY_CARDINALITY_WEIGHT = 1_000_000_000.0
-INCONSISTENCY_RESTORATION_BETA = 1.0
+# Admissible range of ratio inputs; matches the z input fields of the elicitation page.
+INCONSISTENCY_Z_MIN = 1.1
+INCONSISTENCY_Z_MAX = 1000.0
+INCONSISTENCY_MAX_GAP_INCREASE = 30
+INCONSISTENCY_MAX_E0_INCREASE = 100
+INCONSISTENCY_MAX_COMBINED_CHANGE = 12
+INCONSISTENCY_RANGE_SCAN_STEPS = 10
+# Rounding every value of a rescaled z distribution to two decimals moves its
+# expected value by at most 0.005; examples keep twice that distance to range ends.
+INCONSISTENCY_DISTRIBUTION_ROUNDING_MARGIN = 0.01
+# Search budget per request, so inconsistency analysis stays responsive.
+INCONSISTENCY_MAX_CANDIDATE_SETS = 40
+INCONSISTENCY_MAX_CHECKS_PER_SET = 100
+INCONSISTENCY_MAX_FEASIBILITY_CHECKS = 600
 MAX_USER_SAMPLE_SIZE = 20_000
 DEFAULT_SAMPLING_SIZE = 200
 MODULAR_ALLOWED_PROFILES = {
@@ -747,27 +760,6 @@ def _resolve_modular_structure(options):
     return srf_objective, comp_rule_within, comp_rule_successive, ratio_mode, normalized
 
 
-def _observed_gap_counts_by_prev_rank(cards_arrangement):
-    """
-    Returns observed blank-card counts for each successive rank gap keyed by previous rank.
-    """
-    criteria_cards = cards_arrangement[cards_arrangement['class'] == 'criterion'].sort_values('rank')
-
-    rank_white_count = {}
-    for rank in cards_arrangement['rank'].unique():
-        rank_white_count[rank] = cards_arrangement[cards_arrangement['rank'] == rank]['class'].to_list().count('white') + 1
-
-    rank_groups = {}
-    for rank in criteria_cards['rank'].unique():
-        rank_groups[rank] = criteria_cards[criteria_cards['rank'] == rank].index.tolist()
-    sorted_ranks = sorted(rank_groups.keys())
-
-    return {
-        int(prev_rank): int(max(0, rank_white_count[prev_rank] - 1))
-        for prev_rank in sorted_ranks[:-1]
-    }
-
-
 def _map_hfl_card_term(term_value):
     """
     Maps an HFL linguistic term index for successive rank-gap cards.
@@ -894,11 +886,12 @@ def _is_extra_constraints_enabled(extra_cond):
     )
 
 
-def _add_optional_extra_constraints(model, weights, criteria_cards, extra_cond):
+def _add_optional_extra_constraints(model, weights, criteria_cards, extra_cond, name_prefix="extra"):
     """
     Adds optional extra constraints:
       - minimum-weight requirement for all criteria
       - anti-dictatorship requirement (automatic for all criteria)
+    `name_prefix` keeps constraint names unique when a model holds several weight vectors.
     """
     if not isinstance(extra_cond, dict):
         return
@@ -920,7 +913,7 @@ def _add_optional_extra_constraints(model, weights, criteria_cards, extra_cond):
         for idx in criteria_cards.index:
             model.addConstr(
                 weights[idx] >= min_weight_value,
-                f"extra_min_weight_{idx}"
+                f"{name_prefix}_min_weight_{idx}"
             )
 
     # Anti-dictatorship requirement:
@@ -935,7 +928,7 @@ def _add_optional_extra_constraints(model, weights, criteria_cards, extra_cond):
         for idx in criteria_cards.index:
             model.addConstr(
                 weights[idx] <= total_weight - weights[idx],
-                f"extra_anti_dictatorship_{idx}"
+                f"{name_prefix}_anti_dictatorship_{idx}"
             )
 
 
@@ -1049,34 +1042,78 @@ def _resolve_method_structure(srf_method):
     return srf_objective, comp_rule_within, comp_rule_successive, ratio_mode, normalized
 
 
-def _resolve_inconsistency_structure(srf_method, modular_options=None, modular_profile=None):
+def _resolve_model_configuration(srf_method, modular_options=None, modular_profile=None):
     """
-    Resolves EI model structure for both classical SRF methods and modular SRF.
-    Returns components plus the effective restoration method used by exact fix helpers.
+    Resolves the optimization structure used by `calc_srf_flat`.
+
+    Inconsistency analysis builds its feasibility checks from the same result, so
+    an input change it reports as restoring consistency is one the weight
+    calculation can actually solve.
     """
     if srf_method == 'modular_srf':
+        # Modular SRF first resolves questionnaire answers into structural choices,
+        # while classical methods already encode those choices in the method name.
         options, effective_method = resolve_modular_configuration(
             modular_options=modular_options,
             modular_profile=modular_profile
         )
-        (_srf_objective,
+        (srf_objective,
          comp_rule_within,
          comp_rule_successive,
          ratio_mode,
          normalized) = _resolve_modular_structure(options)
+    else:
+        options = None
+        effective_method = srf_method
+        (srf_objective,
+         comp_rule_within,
+         comp_rule_successive,
+         ratio_mode,
+         normalized) = _resolve_method_structure(effective_method)
 
-        # Align EI with the modular dynamic unit-weight setting used in weight computation.
-        if options.get('unit_weight') == 'dynamic' and comp_rule_successive == 'fixed-spacing':
-            comp_rule_successive = 'fully-flexible'
+    is_modular = options is not None
+    output_variability = bool(is_modular and options.get('output_type') == 'variability')
+    dynamic_unit_weight = bool(is_modular and options.get('unit_weight') == 'dynamic')
 
-        return comp_rule_within, comp_rule_successive, ratio_mode, normalized, effective_method
+    # The zero-procedure + dynamic-unit modular variant already encodes its
+    # variability through rank-specific gaps. Adding the conditional gap MILP
+    # layer on top of that shrinks the feasible region and reproduces the
+    # post-2b2bcdd regression seen in the attached case.
+    zero_dynamic_sampling_case = bool(
+        output_variability
+        and options.get('procedure') == 'zero'
+        and dynamic_unit_weight
+    )
+    # Imprecise distance variants sometimes need extra binary logic so gap bounds are
+    # enforced conditionally instead of with one global spacing parameter.
+    conditional_gap_milp = bool(
+        output_variability
+        and options.get('procedure') in {'standard', 'zero'}
+        and options.get('distance_type') == 'imprecise'
+        and comp_rule_successive in {
+            'interval-constrained',
+            'probability-distribution',
+            'hfl-linguistic-interval',
+        }
+        and not zero_dynamic_sampling_case
+    )
 
-    (_srf_objective,
-     comp_rule_within,
-     comp_rule_successive,
-     ratio_mode,
-     normalized) = _resolve_method_structure(srf_method)
-    return comp_rule_within, comp_rule_successive, ratio_mode, normalized, srf_method
+    # Dynamic unit weight (Q12b) is modeled through fully-flexible successive constraints.
+    if dynamic_unit_weight and comp_rule_successive == 'fixed-spacing':
+        comp_rule_successive = 'fully-flexible'
+
+    return {
+        'modular_options': options,
+        'effective_method': effective_method,
+        'srf_objective': srf_objective,
+        'comp_rule_within': comp_rule_within,
+        'comp_rule_successive': comp_rule_successive,
+        'ratio_mode': ratio_mode,
+        'normalized': normalized,
+        'output_variability': output_variability,
+        'dynamic_unit_weight': dynamic_unit_weight,
+        'conditional_gap_milp': conditional_gap_milp,
+    }
 
 
 def _attach_solution_summary_columns(simos_calc_results, srf_samples=None, srf_min_max=None, decimals=2):
@@ -1204,30 +1241,19 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
         done=False
     )
 
-    if is_modular:
-        # Modular SRF first resolves questionnaire answers into structural choices,
-        # while classical methods already encode those choices in the method name.
-        resolved_modular_options, effective_method = resolve_modular_configuration(
-            modular_options=modular_options,
-            modular_profile=modular_profile
-        )
-        (srf_objective,
-         comp_rule_within,
-         comp_rule_successive,
-         ratio_mode,
-         normalized) = _resolve_modular_structure(resolved_modular_options)
-    else:
-        resolved_modular_options = None
-        effective_method = srf_method
-        (srf_objective,
-         comp_rule_within,
-         comp_rule_successive,
-         ratio_mode,
-         normalized) = _resolve_method_structure(effective_method)
-
-    modular_output_variability = bool(
-        is_modular and resolved_modular_options.get('output_type') == 'variability'
+    model_config = _resolve_model_configuration(
+        srf_method,
+        modular_options=modular_options,
+        modular_profile=modular_profile
     )
+    resolved_modular_options = model_config['modular_options']
+    srf_objective = model_config['srf_objective']
+    comp_rule_within = model_config['comp_rule_within']
+    comp_rule_successive = model_config['comp_rule_successive']
+    ratio_mode = model_config['ratio_mode']
+    normalized = model_config['normalized']
+
+    modular_output_variability = model_config['output_variability']
     modular_sampling_size = requested_sampling_size
     if is_modular:
         raw_modular_options = modular_options if isinstance(modular_options, dict) else {}
@@ -1238,9 +1264,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
                 else raw_modular_options.get('sample_size')
             )
             modular_sampling_size = _coerce_sample_size(raw_sampling_size)
-    modular_dynamic_unit = bool(
-        is_modular and resolved_modular_options.get('unit_weight') == 'dynamic'
-    )
+    modular_dynamic_unit = model_config['dynamic_unit_weight']
     modular_robust_equivalent = bool(
         is_modular and _is_modular_robust_equivalent(resolved_modular_options)
     )
@@ -1264,34 +1288,7 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
             )
         )
     )
-    # The zero-procedure + dynamic-unit modular variant already encodes its
-    # variability through rank-specific gaps. Adding the conditional gap MILP
-    # layer on top of that shrinks the feasible region and reproduces the
-    # post-2b2bcdd regression seen in the attached case.
-    zero_dynamic_sampling_case = bool(
-        is_modular
-        and modular_output_variability
-        and resolved_modular_options.get('procedure') == 'zero'
-        and modular_dynamic_unit
-    )
-    # Imprecise distance variants sometimes need extra binary logic so gap bounds are
-    # enforced conditionally instead of with one global spacing parameter.
-    conditional_gap_milp = bool(
-        is_modular
-        and modular_output_variability
-        and resolved_modular_options.get('procedure') in {'standard', 'zero'}
-        and resolved_modular_options.get('distance_type') == 'imprecise'
-        and comp_rule_successive in {
-            'interval-constrained',
-            'probability-distribution',
-            'hfl-linguistic-interval',
-        }
-        and not zero_dynamic_sampling_case
-    )
-
-    # Dynamic unit weight (Q12b) is modeled through fully-flexible successive constraints.
-    if modular_dynamic_unit and comp_rule_successive == 'fixed-spacing':
-        comp_rule_successive = 'fully-flexible'
+    conditional_gap_milp = model_config['conditional_gap_milp']
 
     """
     [O6] Extra Constraints
@@ -1744,10 +1741,12 @@ def calc_srf_flat(cards_arrangement, z_value, e_value, w_value, srf_method,
     return simos_calc_results, asi_value
 
 
-def _add_relaxable_issue(model, issue_vars, issue_meta, issue_id, expr, bound, metadata):
+def _add_relaxable_issue(model, issue_vars, issue_meta, issue_id, expr, bound, metadata, residual_cap=None):
     """
     Adds one relaxable inconsistency issue linked to a binary variable.
     bound='lb' encodes expr >= 0, bound='ub' encodes expr <= 0.
+    `residual_cap` bounds the violation, e.g. to what the smallest admissible
+    input value still allows.
     """
     y_var = model.addVar(vtype=GRB.BINARY, name=f"ei_{issue_id}")
     residual_var = model.addVar(lb=0.0, name=f"ri_{issue_id}")
@@ -1758,6 +1757,8 @@ def _add_relaxable_issue(model, issue_vars, issue_meta, issue_id, expr, bound, m
     else:
         raise ValueError("Invalid relaxable issue bound type.")
     model.addConstr(residual_var <= INCONSISTENCY_BIG_M * y_var, f"ei_resid_link_{issue_id}")
+    if residual_cap is not None:
+        model.addConstr(residual_var <= residual_cap, f"ei_resid_cap_{issue_id}")
 
     issue_vars[issue_id] = y_var
     issue_meta[issue_id] = {
@@ -2345,107 +2346,779 @@ def _estimate_linear_spacing_e0_anchor(e_value):
         return 0.0
 
 
-def _build_inconsistency_recommendation(issue_id, meta, rank_groups):
+def _input_parameter(key,
+                     label,
+                     current,
+                     direction,
+                     value_type='int',
+                     lower=None,
+                     upper=None,
+                     rank_pair=None,
+                     ratio=None):
     """
-    Builds one human-readable recommendation from an active EI issue.
+    Describes the user input that a relaxable EI issue asks to change.
+
+    `ratio` is set for ratio inputs. It names the model constraints encoding the
+    input so the restoration search can compute the input's feasible range exactly.
     """
-    expr_val = float(meta['expr'].getValue())
-    residual = float(meta.get('residual_var').X) if meta.get('residual_var') is not None else abs(expr_val)
-    bound = meta['bound']
-    direction = 'decrease' if bound == 'lb' else 'increase'
-    label = meta.get('label', issue_id)
-    current_value = meta.get('current_value')
-    if residual <= 1e-9:
-        return None
-
-    if meta.get('scale_source') == 'gap':
-        scale_ref = _safe_positive(meta.get('scale_var').X if meta.get('scale_var') is not None else 1.0)
-        delta_value = max(1, int(np.ceil(residual / scale_ref)))
-    elif meta.get('scale_source') == 'ratio':
-        den_var = meta.get('den_var')
-        den_val = _safe_positive(den_var.X if den_var is not None else 1.0)
-        ratio_delta = max(0.0, residual / den_val)
-        if meta.get('value_type') == 'int':
-            delta_value = max(1, int(np.ceil(ratio_delta)))
-        else:
-            delta_value = ratio_delta
-    else:
-        delta_value = 1
-
-    proposed_value = None
-    if current_value is not None:
-        if direction == 'decrease':
-            proposed_value = current_value - delta_value
-        else:
-            proposed_value = current_value + delta_value
-
-        min_value = meta.get('min_value')
-        max_value = meta.get('max_value')
-        if direction == 'decrease' and min_value is not None and current_value <= min_value + 1e-9:
-            return None
-        if direction == 'increase' and max_value is not None and current_value >= max_value - 1e-9:
-            return None
-        if min_value is not None:
-            proposed_value = max(min_value, proposed_value)
-        if max_value is not None:
-            proposed_value = min(max_value, proposed_value)
-
-        if meta.get('value_type') == 'int':
-            proposed_value = int(round(proposed_value))
-        else:
-            proposed_value = float(round(proposed_value, 3))
-
-    if proposed_value is not None and abs(float(proposed_value) - float(current_value)) <= 1e-9:
-        return None
-
-    recommendation_text = (
-        f"{direction.capitalize()} {label}"
-        + (
-            f" from {current_value} to about {proposed_value}."
-            if proposed_value is not None else "."
-        )
-    )
-
     return {
-        'issue_id': issue_id,
+        'key': key,
+        'label': label,
+        'current': current,
         'direction': direction,
-        'rank_pair': meta.get('rank_pair'),
-        'recommendation': recommendation_text
+        'value_type': value_type,
+        'lower': lower,
+        'upper': upper,
+        'rank_pair': rank_pair,
+        'ratio': ratio,
     }
 
 
-def _is_configuration_feasible(cards_arrangement,
-                               z_value,
-                               e_value,
-                               srf_method,
-                               extra_constraints=None,
-                               min_delta=1.0,
-                               gap_overrides=None):
+def _add_ratio_issue(model,
+                     issue_vars,
+                     issue_meta,
+                     issue_id,
+                     num_var,
+                     den_var,
+                     value,
+                     bound,
+                     parameter,
+                     floor_value=None,
+                     ceiling_value=None):
     """
-    Feasibility oracle on the base SRF model for a concrete configuration.
+    Adds a relaxable `num >= value * den` (bound='lb') or `num <= value * den`
+    (bound='ub') issue. The relaxation stops at the admissible input range, so a
+    lowered ratio never goes below `floor_value` and a raised one never above
+    `ceiling_value`. When the input cannot change (`parameter` is None) or already
+    sits at that limit, the constraint is added as a hard constraint and None is
+    returned.
     """
-    (_srf_objective,
-     comp_rule_within,
-     comp_rule_successive,
-     ratio_mode,
-     normalized) = _resolve_method_structure(srf_method)
+    expr = num_var - value * den_var
+    if parameter is None:
+        model.addConstr(expr >= 0 if bound == 'lb' else expr <= 0, f"ei_hard_{issue_id}")
+        return None
+    residual_cap = None
+    if bound == 'lb' and floor_value is not None:
+        if value <= floor_value + 1e-9:
+            model.addConstr(expr >= 0, f"ei_hard_{issue_id}")
+            return None
+        residual_cap = (value - floor_value) * den_var
+    elif bound == 'ub' and ceiling_value is not None:
+        if value >= ceiling_value - 1e-9:
+            model.addConstr(expr <= 0, f"ei_hard_{issue_id}")
+            return None
+        residual_cap = (ceiling_value - value) * den_var
 
-    extra_cond = extra_constraints if isinstance(extra_constraints, dict) else None
-    model, weights, rank_groups, criteria_cards, delta = _build_srf_model(
-        cards_arrangement,
-        z_value,
-        e_value,
-        comp_rule_within=comp_rule_within,
+    return _add_relaxable_issue(
+        model, issue_vars, issue_meta,
+        issue_id=issue_id,
+        expr=expr,
+        bound=bound,
+        metadata={'parameter': parameter},
+        residual_cap=residual_cap
+    )
+
+
+def _linear_spacing_e0_parameters(e_value):
+    """
+    Returns the e0 inputs that lower and raise the SRF-II implied ratio as
+    (raise-e0 parameter, lower-e0 parameter). A larger e0 flattens the implied
+    ratio towards 1. Either entry is None when that input is already at its limit.
+    """
+    if not isinstance(e_value, dict):
+        current = int(round(_estimate_linear_spacing_e0_anchor(e_value)))
+        label = "e0 value (SRF-II)"
+        return (
+            _input_parameter(('e0',), label, current, 'increase', upper=current + INCONSISTENCY_MAX_E0_INCREASE),
+            _input_parameter(('e0',), label, current, 'decrease', lower=0) if current > 0 else None
+        )
+
+    e0_cloud = _extract_probability_pairs(e_value, value_prefix='e-value-0-', beta_prefix='e-beta-0-')
+    if e0_cloud:
+        e0_cloud = _normalize_probability_cloud(e0_cloud)
+        low = int(np.floor(min(e0_cloud.keys())))
+        high = int(np.ceil(max(e0_cloud.keys())))
+        return (
+            _input_parameter(('e_support', 0, 'max'), "largest e0 value in the belief distribution", high,
+                             'increase', upper=high + INCONSISTENCY_MAX_E0_INCREASE),
+            _input_parameter(('e_support', 0, 'min'), "smallest e0 value in the belief distribution", low,
+                             'decrease', lower=0) if low > 0 else None
+        )
+
+    if 'e0' in e_value:
+        current = int(float(e_value['e0']))
+        label = "e0 value"
+        return (
+            _input_parameter(('e_key', 'e0'), label, current, 'increase', upper=current + INCONSISTENCY_MAX_E0_INCREASE),
+            _input_parameter(('e_key', 'e0'), label, current, 'decrease', lower=0) if current > 0 else None
+        )
+
+    if 'rmin_0' in e_value or 'rmax_0' in e_value:
+        r_min = int(e_value.get('rmin_0', e_value.get('rmax_0', HFL_CARD_MIN_TERM)))
+        r_max = int(e_value.get('rmax_0', r_min))
+        return (
+            _input_parameter(('e_key', 'rmax_0'), "HFL upper e0 term", r_max, 'increase',
+                             upper=HFL_CARD_MAX_TERM) if r_max < HFL_CARD_MAX_TERM else None,
+            _input_parameter(('e_key', 'rmin_0'), "HFL lower e0 term", r_min, 'decrease',
+                             lower=HFL_CARD_MIN_TERM) if r_min > HFL_CARD_MIN_TERM else None
+        )
+
+    if 'emin_0' in e_value or 'emax_0' in e_value:
+        e_min = int(float(e_value.get('emin_0', e_value.get('emax_0', 0))))
+        e_max = int(float(e_value.get('emax_0', e_min)))
+        return (
+            _input_parameter(('e_key', 'emax_0'), "maximum e0 value", e_max, 'increase',
+                             upper=e_max + INCONSISTENCY_MAX_E0_INCREASE),
+            _input_parameter(('e_key', 'emin_0'), "minimum e0 value", e_min, 'decrease',
+                             lower=0) if e_min > 0 else None
+        )
+
+    return None, None
+
+
+def _z_scale_parameters(z_value):
+    """
+    Classical belief-degree SRF: parameters rescaling every z value of the belief
+    distribution proportionally around 1 (z -> 1 + k * (z - 1)), identified by the
+    resulting expected z. Rescaling keeps the betas and the order of the values
+    and, unlike an equal shift, can always move a wide distribution towards 1.
+    Returns (decrease parameter, increase parameter); either is None at its limit.
+    """
+    cloud, z_min, z_max, expected = _probability_cloud_stats(
+        _extract_probability_pairs(z_value, value_prefix='z-value-', beta_prefix='z-beta-')
+    )
+    if z_min <= 1.0:
+        return None, None
+
+    # Every rescaled z value must stay inside the admissible z range.
+    lower = 1.0 + (INCONSISTENCY_Z_MIN - 1.0) * (expected - 1.0) / (z_min - 1.0)
+    upper = 1.0 + (INCONSISTENCY_Z_MAX - 1.0) * (expected - 1.0) / (z_max - 1.0)
+    label = "expected z of the belief distribution"
+    ratio = {'kind': 'expected'}
+
+    parameters = []
+    for direction, available in (('decrease', expected > lower + 1e-9), ('increase', expected < upper - 1e-9)):
+        if not available:
+            parameters.append(None)
+            continue
+        parameter = _input_parameter(('z_scale',), label, expected, direction, value_type='float',
+                                     lower=lower, upper=upper, ratio=ratio)
+        parameter['support_values'] = sorted(cloud.keys())
+        parameters.append(parameter)
+    return tuple(parameters)
+
+
+def _e_shift_parameters(e_value, prev_rank, pair_label, rank_pair):
+    """
+    Classical belief-degree SRF: parameters moving every blank-card value of one
+    gap distribution by the same whole number, identified by the resulting
+    smallest value. Returns (decrease parameter, increase parameter).
+    """
+    cloud = {}
+    if isinstance(e_value, dict):
+        cloud = _extract_probability_pairs(
+            e_value,
+            value_prefix=f"e-value-{prev_rank}-",
+            beta_prefix=f"e-beta-{prev_rank}-",
+        )
+    if not cloud:
+        return None, None
+
+    support = sorted(_normalize_probability_cloud(cloud).keys())
+    smallest = int(round(support[0]))
+    key = ('e_shift', int(prev_rank))
+    label = f"blank-card value in the belief distribution between {pair_label}"
+    decrease = _input_parameter(key, label, smallest, 'decrease', lower=0, rank_pair=rank_pair) if smallest > 0 else None
+    increase = _input_parameter(key, label, smallest, 'increase',
+                                upper=smallest + INCONSISTENCY_MAX_GAP_INCREASE, rank_pair=rank_pair)
+    for parameter in (decrease, increase):
+        if parameter is not None:
+            parameter['support_values'] = support
+    return decrease, increase
+
+
+def _shift_probability_values(values, value_prefix, beta_prefix, target_smallest):
+    """
+    Adds the same amount to every value of a flat (value, beta) distribution so
+    that its smallest value becomes `target_smallest`.
+    """
+    cloud = _extract_probability_pairs(values, value_prefix=value_prefix, beta_prefix=beta_prefix)
+    if not cloud:
+        raise ValueError("No probability distribution is available to shift.")
+    _normalized, smallest, _largest, _expected = _probability_cloud_stats(cloud)
+    shift = float(target_smallest) - smallest
+    for key in list(values.keys()):
+        if key.startswith(value_prefix) and f"{beta_prefix}{key[len(value_prefix):]}" in values:
+            values[key] = float(values[key]) + shift
+
+
+def _scale_probability_values(values, value_prefix, beta_prefix, target_expected):
+    """
+    Rescales every value of a flat (value, beta) ratio distribution around 1 so
+    that its expected value becomes `target_expected`.
+    """
+    cloud = _extract_probability_pairs(values, value_prefix=value_prefix, beta_prefix=beta_prefix)
+    if not cloud:
+        raise ValueError("No probability distribution is available to rescale.")
+    _normalized, _smallest, _largest, expected = _probability_cloud_stats(cloud)
+    factor = (float(target_expected) - 1.0) / (expected - 1.0)
+    for key in list(values.keys()):
+        if key.startswith(value_prefix) and f"{beta_prefix}{key[len(value_prefix):]}" in values:
+            values[key] = 1.0 + (float(values[key]) - 1.0) * factor
+
+
+def _add_expected_belief_issues(model,
+                                issue_vars,
+                                issue_meta,
+                                cards_arrangement,
+                                z_value,
+                                e_value,
+                                criteria_cards,
+                                rank_white_count,
+                                comp_rule_within,
+                                normalized,
+                                extra_cond,
+                                min_delta,
+                                z_scale_parameters,
+                                e_shift_parameters):
+    """
+    Classical belief-degree SRF reports the weights of the expected inputs, so the
+    EI model also contains that solution. Its issues use the same distribution
+    parameters as the support model, so one proposed edit is judged against both.
+    """
+    expected_z, expected_e = _build_belief_expected_inputs(cards_arrangement, z_value, e_value)
+    weights = {
+        idx: model.addVar(lb=0, name=f"w_expected_{idx}")
+        for idx in criteria_cards.index
+    }
+    spacing_scale = model.addVar(lb=max(float(min_delta), 1e-6), name="ei_expected_scale")
+
+    rank_groups = {}
+    for rank in criteria_cards['rank'].unique():
+        rank_groups[rank] = criteria_cards[criteria_cards['rank'] == rank].index.tolist()
+    sorted_ranks = sorted(rank_groups.keys())
+
+    if comp_rule_within == 'equal':
+        for rank, indices in rank_groups.items():
+            for i in range(1, len(indices)):
+                model.addConstr(
+                    weights[indices[0]] == weights[indices[i]],
+                    f"ei_expected_equal_within_rank_{rank}_{i}"
+                )
+
+    for i in range(1, len(sorted_ranks)):
+        prev_rank = sorted_ranks[i - 1]
+        curr_rank = sorted_ranks[i]
+        diff_expr = weights[rank_groups[curr_rank][0]] - weights[rank_groups[prev_rank][0]]
+        expected_gap_key = f'emin_{prev_rank}'
+        if expected_gap_key not in expected_e:
+            # Gaps without blank cards keep the deck spacing in the expected model.
+            model.addConstr(
+                diff_expr == spacing_scale * rank_white_count[prev_rank],
+                f"ei_expected_gap_fixed_{prev_rank}"
+            )
+            continue
+
+        expr = diff_expr - spacing_scale * (float(expected_e[expected_gap_key]) + 1.0)
+        decrease, increase = e_shift_parameters.get(int(prev_rank), (None, None))
+        y_decrease = None
+        y_increase = None
+        if decrease is not None:
+            # Values cannot drop below zero, so the expected gap shrinks by at most
+            # the smallest value of the distribution.
+            y_decrease = _add_relaxable_issue(
+                model, issue_vars, issue_meta,
+                issue_id=f"expected_gap_{prev_rank}_plus",
+                expr=expr,
+                bound='lb',
+                metadata={'parameter': decrease},
+                residual_cap=spacing_scale * decrease['current']
+            )
+        else:
+            model.addConstr(expr >= 0, f"ei_hard_expected_gap_{prev_rank}_plus")
+        if increase is not None:
+            y_increase = _add_relaxable_issue(
+                model, issue_vars, issue_meta,
+                issue_id=f"expected_gap_{prev_rank}_minus",
+                expr=expr,
+                bound='ub',
+                metadata={'parameter': increase}
+            )
+        else:
+            model.addConstr(expr <= 0, f"ei_hard_expected_gap_{prev_rank}_minus")
+        if y_decrease is not None and y_increase is not None:
+            model.addConstr(y_decrease + y_increase <= 1, f"ei_expected_gap_{prev_rank}_exclusive")
+
+    num_var, den_var = _ratio_pair_variables(('global',), weights, rank_groups)
+    expected_ratio = float(expected_z['zmin'])
+    decrease, increase = z_scale_parameters
+    y_decrease = _add_ratio_issue(
+        model, issue_vars, issue_meta, "expected_z_min",
+        num_var, den_var, expected_ratio, 'lb', decrease,
+        floor_value=decrease['lower'] if decrease is not None else None
+    )
+    y_increase = _add_ratio_issue(
+        model, issue_vars, issue_meta, "expected_z_max",
+        num_var, den_var, expected_ratio, 'ub', increase,
+        ceiling_value=increase['upper'] if increase is not None else None
+    )
+    if y_decrease is not None and y_increase is not None:
+        model.addConstr(y_decrease + y_increase <= 1, "ei_expected_z_exclusive")
+
+    if normalized:
+        model.addConstr(gp.quicksum(weights.values()) == 100, "ei_expected_normalization")
+    if extra_cond is not None:
+        _add_optional_extra_constraints(model, weights, criteria_cards, extra_cond, name_prefix="ei_expected_extra")
+
+
+def _set_probability_support(values, value_prefix, beta_prefix, which, new_value):
+    """
+    Moves the smallest (`which='min'`) or largest (`which='max'`) value of a
+    flat (value, beta) distribution to `new_value`.
+    """
+    support = {}
+    for key, raw_value in values.items():
+        if not key.startswith(value_prefix):
+            continue
+        beta_key = f"{beta_prefix}{key[len(value_prefix):]}"
+        if beta_key in values and float(values[beta_key]) > 0:
+            support[key] = float(raw_value)
+    if not support:
+        raise ValueError("No probability support is available to adjust.")
+
+    target = min(support.values()) if which == 'min' else max(support.values())
+    for key, support_value in support.items():
+        if abs(support_value - target) <= 1e-12:
+            values[key] = new_value
+
+
+def _apply_input_adjustments(z_value, e_value, adjustments):
+    """
+    Returns copies of the z/e inputs plus blank-card overrides with `adjustments`
+    ({parameter key: new value}) applied.
+    """
+    z_adjusted = dict(z_value) if isinstance(z_value, dict) else z_value
+    e_adjusted = dict(e_value) if isinstance(e_value, dict) else e_value
+    gap_overrides = {}
+
+    for key, value in adjustments.items():
+        kind = key[0]
+        if kind == 'gap':
+            gap_overrides[int(key[1])] = int(value)
+        elif kind == 'z':
+            z_adjusted = float(value)
+        elif kind == 'e0':
+            e_adjusted = int(value)
+        elif kind == 'z_key':
+            z_adjusted[key[1]] = value
+        elif kind == 'e_key':
+            e_adjusted[key[1]] = value
+        elif kind == 'z_support':
+            _set_probability_support(z_adjusted, 'z-value-', 'z-beta-', key[1], value)
+        elif kind == 'e_support':
+            _set_probability_support(
+                e_adjusted, f"e-value-{key[1]}-", f"e-beta-{key[1]}-", key[2], value
+            )
+        elif kind == 'z_scale':
+            _scale_probability_values(z_adjusted, 'z-value-', 'z-beta-', value)
+        elif kind == 'e_shift':
+            _shift_probability_values(
+                e_adjusted, f"e-value-{key[1]}-", f"e-beta-{key[1]}-", int(value)
+            )
+        else:
+            raise ValueError(f"Unknown input adjustment: {key}")
+
+    return z_adjusted, e_adjusted, gap_overrides
+
+
+def _build_adjusted_model(context, adjustments, drop_constraints=(), expected_inputs=False):
+    """
+    Builds the weight-calculation model for the original inputs with `adjustments`
+    applied, removing the constraints named in `drop_constraints`.
+    """
+    config = context['config']
+    z_adjusted, e_adjusted, gap_overrides = _apply_input_adjustments(
+        context['z_value'], context['e_value'], adjustments
+    )
+    comp_rule_successive = config['comp_rule_successive']
+    ratio_mode = config['ratio_mode']
+    if expected_inputs:
+        # Classical belief-degree SRF reports the solution for the expected inputs.
+        z_adjusted, e_adjusted = _build_belief_expected_inputs(
+            context['cards_arrangement'], z_adjusted, e_adjusted
+        )
+        comp_rule_successive = 'interval-constrained'
+        ratio_mode = 'interval-total'
+
+    model, weights, rank_groups, _criteria_cards, _delta = _build_srf_model(
+        context['cards_arrangement'],
+        z_adjusted,
+        e_adjusted,
+        comp_rule_within=config['comp_rule_within'],
         comp_rule_successive=comp_rule_successive,
         ratio_mode=ratio_mode,
-        normalized=normalized,
-        extra_cond=extra_cond,
-        min_delta=min_delta,
+        normalized=config['normalized'],
+        extra_cond=context['extra_constraints'],
+        min_delta=context['min_delta'],
         launch_smaa=False,
-        gap_overrides=gap_overrides
+        gap_overrides=gap_overrides or None,
+        conditional_gap_milp=config['conditional_gap_milp'],
+        dynamic_unit_weight=config['dynamic_unit_weight']
     )
+    for name in drop_constraints:
+        del model._problem.constraints[name]
+    return model, weights, rank_groups
+
+
+def _is_adjustment_feasible(context, adjustments):
+    """
+    Returns True when the weight calculation is feasible after applying `adjustments`.
+    """
+    model_variants = [False, True] if context['check_expected_model'] else [False]
+    for expected_inputs in model_variants:
+        context['remaining_checks'] -= 1
+        try:
+            model, _weights, _rank_groups = _build_adjusted_model(
+                context, adjustments, expected_inputs=expected_inputs
+            )
+        except (ValueError, KeyError, TypeError, ZeroDivisionError):
+            return False
+        _optimize_model(model)
+        if model.status != GRB.OPTIMAL:
+            return False
+    return True
+
+
+def _ratio_pair_variables(pair, weights, rank_groups):
+    """
+    Returns the (numerator, denominator) weight variables of a ratio input.
+    """
+    if pair[0] == 'successive':
+        rank = pair[1]
+        return weights[rank_groups[rank + 1][0]], weights[rank_groups[rank][0]]
+
+    sorted_ranks = sorted(rank_groups.keys())
+    return weights[rank_groups[sorted_ranks[-1]][0]], weights[rank_groups[sorted_ranks[0]][0]]
+
+
+def _ratio_extremes_linear(context, model, num_var, den_var):
+    """
+    Smallest and largest num/den over an LP feasible region via the
+    Charnes-Cooper transformation y = t * x, t = 1 / den.
+    """
+    context['remaining_checks'] -= 2
+    variables, A_ub, b_ub, A_eq, b_eq = _extract_freeopt_polytope(model)
+    n_vars = len(variables)
+    num_pos = next(idx for idx, var in enumerate(variables) if var is num_var)
+    den_pos = next(idx for idx, var in enumerate(variables) if var is den_var)
+
+    A_ub_cc = np.hstack([A_ub, -b_ub.reshape(-1, 1)])
+    den_row = np.zeros((1, n_vars + 1))
+    den_row[0, den_pos] = 1.0
+    A_eq_cc = np.vstack([np.hstack([A_eq, -b_eq.reshape(-1, 1)]), den_row])
+    b_eq_cc = np.zeros(len(A_eq_cc))
+    b_eq_cc[-1] = 1.0
+    bounds = [(None, None)] * n_vars + [(0, None)]
+
+    extremes = []
+    for sense in (1.0, -1.0):
+        objective = np.zeros(n_vars + 1)
+        objective[num_pos] = sense
+        result = linprog(
+            objective,
+            A_ub=A_ub_cc if len(A_ub_cc) else None,
+            b_ub=np.zeros(len(A_ub_cc)) if len(A_ub_cc) else None,
+            A_eq=A_eq_cc,
+            b_eq=b_eq_cc,
+            bounds=bounds,
+            method='highs'
+        )
+        if result.status == 2:
+            return None
+        if result.status == 3:
+            extremes.append(-sense * np.inf)
+        elif result.status == 0:
+            extremes.append(sense * float(result.fun))
+        else:
+            return None
+    return extremes[0], extremes[1]
+
+
+def _ratio_extremes_by_bisection(context, model, num_var, den_var, iterations=24):
+    """
+    Smallest and largest num/den over a MILP feasible region by bisection on
+    probe constraints. Both results are rounded towards the inside of the range.
+    """
+    probe_name = "ei_ratio_probe"
+
+    def ratio_reachable(threshold, at_least):
+        model._problem.constraints.pop(probe_name, None)
+        probe = num_var - threshold * den_var
+        model.addConstr(probe >= 0 if at_least else probe <= 0, probe_name)
+        context['remaining_checks'] -= 1
+        _optimize_model(model)
+        return model.status == GRB.OPTIMAL
+
+    context['remaining_checks'] -= 1
     _optimize_model(model)
-    return model.status == GRB.OPTIMAL
+    if model.status != GRB.OPTIMAL:
+        return None
+
+    if ratio_reachable(INCONSISTENCY_Z_MAX, at_least=True):
+        ratio_max = np.inf
+    else:
+        low, high = 0.0, INCONSISTENCY_Z_MAX
+        for _ in range(iterations):
+            middle = (low + high) / 2.0
+            if ratio_reachable(middle, at_least=True):
+                low = middle
+            else:
+                high = middle
+        ratio_max = low
+
+    if ratio_reachable(0.0, at_least=False):
+        ratio_min = 0.0
+    elif not ratio_reachable(INCONSISTENCY_Z_MAX, at_least=False):
+        ratio_min = np.inf
+    else:
+        low, high = 0.0, INCONSISTENCY_Z_MAX
+        for _ in range(iterations):
+            middle = (low + high) / 2.0
+            if ratio_reachable(middle, at_least=False):
+                high = middle
+            else:
+                low = middle
+        ratio_min = high
+
+    model._problem.constraints.pop(probe_name, None)
+    return ratio_min, ratio_max
+
+
+def _ratio_range_without(context, adjustments, constraints, pair, expected_inputs=False):
+    """
+    Returns the (min, max) ratio of `pair` in the adjusted model once the named
+    ratio constraints are removed, or None when that model is infeasible.
+    """
+    try:
+        model, weights, rank_groups = _build_adjusted_model(
+            context, adjustments, drop_constraints=constraints, expected_inputs=expected_inputs
+        )
+    except (ValueError, KeyError, TypeError, ZeroDivisionError):
+        return None
+
+    num_var, den_var = _ratio_pair_variables(pair, weights, rank_groups)
+    if all(_lp_var_is_continuous(var) for var in model._vars):
+        return _ratio_extremes_linear(context, model, num_var, den_var)
+    return _ratio_extremes_by_bisection(context, model, num_var, den_var)
+
+
+def _feasible_ratio_parameter_interval(context, adjustments, parameter):
+    """
+    Returns the (low, high) values of a ratio input that make the model feasible
+    once `adjustments` are applied, restricted to the requested side of the
+    current value. Returns None when no such value exists or when the current
+    value already works (so this input does not need to change).
+    """
+    ratio = parameter['ratio']
+    if ratio.get('kind') == 'expected':
+        bound_constraints = ['z_ratio_constraint_min', 'z_ratio_constraint_max']
+        support_range = _ratio_range_without(context, adjustments, bound_constraints, ('global',))
+        expected_range = _ratio_range_without(
+            context, adjustments, bound_constraints, ('global',), expected_inputs=True
+        )
+        if support_range is None or expected_range is None:
+            return None
+        expected = float(parameter['current'])
+        # Rescaled to expected value v, the support becomes
+        # [1 + low_factor * (v - 1), 1 + high_factor * (v - 1)].
+        low_factor = (min(parameter['support_values']) - 1.0) / (expected - 1.0)
+        high_factor = (max(parameter['support_values']) - 1.0) / (expected - 1.0)
+        # The expected z must be attainable in the expected-input model, and the
+        # rescaled support must overlap the attainable ratios of the support model.
+        low = max(expected_range[0], 1.0 + (support_range[0] - 1.0) / high_factor)
+        high = min(expected_range[1], 1.0 + (support_range[1] - 1.0) / low_factor)
+    else:
+        extremes = _ratio_range_without(context, adjustments, ratio['constraints'], ratio['pair'])
+        if extremes is None:
+            return None
+        ratio_min, ratio_max = extremes
+
+        # A lower bound on the ratio must not exceed its largest attainable value, an
+        # upper bound must not fall below its smallest one, and an exact ratio must
+        # lie between both.
+        low = ratio_min if ratio['bound'] in {'eq', 'ub'} else -np.inf
+        high = ratio_max if ratio['bound'] in {'eq', 'lb'} else np.inf
+    current = float(parameter['current'])
+    if parameter['direction'] == 'decrease':
+        if high >= current - 1e-6:
+            return None
+        low = max(low, float(parameter['lower']))
+    else:
+        if low <= current + 1e-6:
+            return None
+        high = min(high, float(parameter['upper']))
+
+    if low > high:
+        return None
+    return low, high
+
+
+def _verified_ratio_bound(context, adjustments, key, value, inward_step, limit, attempts=3):
+    """
+    Returns `value`, or the first value moved inward by `inward_step`, that the
+    exact model accepts. This absorbs LP round-off at the ends of a range.
+    """
+    for _ in range(attempts):
+        if (inward_step > 0 and value > limit + 1e-12) or (inward_step < 0 and value < limit - 1e-12):
+            return None
+        candidate = float(round(value, 6))
+        if _is_adjustment_feasible(context, {**adjustments, key: candidate}):
+            return candidate
+        value += inward_step
+    return None
+
+
+def _pick_verified_ratio_values(context, adjustments, parameter, low, high):
+    """
+    Rounds a feasible ratio range inward to display precision, verifies both shown
+    bounds against the exact model, and picks an example value. The example is a
+    one-decimal value (matching the input step) closest to the current input
+    whenever the range allows it. Returns (suggested, shown_low, shown_high) or None.
+    """
+    key = parameter['key']
+    slack = 1e-4
+    for decimals in (2, 3, 4):
+        scale = 10 ** decimals
+        shown_low = float(np.ceil(low * scale - slack) / scale)
+        shown_high = float(np.floor(high * scale + slack) / scale)
+        if shown_low > shown_high:
+            continue
+
+        verified_low = _verified_ratio_bound(context, adjustments, key, shown_low, 1.0 / scale, shown_high)
+        if verified_low is None:
+            continue
+        verified_high = _verified_ratio_bound(context, adjustments, key, shown_high, -1.0 / scale, verified_low)
+        if verified_high is None:
+            continue
+
+        # Rescaled belief distributions are displayed with two decimals, so their
+        # example keeps enough distance from the range ends to absorb that rounding.
+        margin = INCONSISTENCY_DISTRIBUTION_ROUNDING_MARGIN if key[0] == 'z_scale' else 0.0
+        example_low = verified_low + margin
+        example_high = verified_high - margin
+        if example_low > example_high:
+            example_low = example_high = (verified_low + verified_high) / 2.0
+
+        # Any value between two verified bounds is feasible: the feasible values
+        # of one ratio input form an interval.
+        if parameter['direction'] == 'decrease':
+            one_decimal = float(np.floor(example_high * 10 + slack) / 10)
+            fallback = max(verified_low, float(np.floor(example_high * scale) / scale))
+        else:
+            one_decimal = float(np.ceil(example_low * 10 - slack) / 10)
+            fallback = min(verified_high, float(np.ceil(example_low * scale) / scale))
+        if (example_low <= one_decimal <= example_high
+                and _is_adjustment_feasible(context, {**adjustments, key: one_decimal})):
+            return one_decimal, verified_low, verified_high
+        return fallback, verified_low, verified_high
+
+    return None
+
+
+def _format_input_value(value, value_type):
+    if value_type == 'int':
+        return str(int(round(float(value))))
+    return str(float(round(float(value), 4)))
+
+
+def _adjusted_distribution_text(parameter, new_anchor):
+    """
+    Renders "a, b become c, d" for a belief distribution edited so that its
+    anchor (expected z or smallest blank-card value) becomes `new_anchor`.
+    """
+    current = float(parameter['current'])
+    if parameter['key'][0] == 'z_scale':
+        factor = (float(new_anchor) - 1.0) / (current - 1.0)
+        adjust = lambda value: 1.0 + (value - 1.0) * factor
+    else:
+        adjust = lambda value: value + float(new_anchor) - current
+
+    value_type = parameter['value_type']
+    old_values = ', '.join(_format_input_value(value, value_type) for value in parameter['support_values'])
+    new_values = ', '.join(
+        _format_input_value(round(adjust(value), 2), value_type) for value in parameter['support_values']
+    )
+    return f"{old_values} become {new_values}"
+
+
+def _integer_recommendation(parameter, value, extended_value=None):
+    """
+    Builds the recommendation for an integer input moved to `value`. When
+    `extended_value` is given, every value between both was verified as well.
+    """
+    low, high = sorted((value, value if extended_value is None else extended_value))
+    current = int(parameter['current'])
+    if parameter['key'][0] == 'e_shift':
+        text = (
+            f"{parameter['direction'].capitalize()} every {parameter['label']} by "
+            f"{abs(value - current)} (values {_adjusted_distribution_text(parameter, value)}"
+        )
+        if high != low:
+            smallest_shift, largest_shift = sorted((abs(low - current), abs(high - current)))
+            text += f"; any shift from {smallest_shift} to {largest_shift} works"
+        text += ")"
+    else:
+        text = (
+            f"{parameter['direction'].capitalize()} {parameter['label']} from "
+            f"{_format_input_value(current, 'int')} to {value}"
+        )
+        if high != low:
+            text += f" (any value from {low} to {high} works)"
+    return {
+        'issue_id': parameter['issue_id'],
+        'direction': parameter['direction'],
+        'rank_pair': parameter['rank_pair'],
+        'current_value': parameter['current'],
+        'suggested_value': value,
+        'feasible_min': low,
+        'feasible_max': high,
+        'recommendation': text + ".",
+    }
+
+
+def _ratio_recommendation(parameter, suggested, shown_low=None, shown_high=None):
+    """
+    Builds the recommendation for a ratio input moved to `suggested`, optionally
+    stating the verified range [shown_low, shown_high] of values that also work.
+    """
+    fmt = lambda value: _format_input_value(value, 'float')
+    text = (
+        f"{parameter['direction'].capitalize()} {parameter['label']} from "
+        f"{fmt(parameter['current'])} to {fmt(suggested)}"
+    )
+    notes = []
+    if parameter['key'][0] == 'z_scale':
+        text += " by rescaling all z values proportionally around 1"
+        notes.append(f"z values {_adjusted_distribution_text(parameter, suggested)}")
+    if shown_low is not None and shown_high is not None and shown_high > shown_low:
+        if parameter['direction'] == 'decrease' and shown_low <= float(parameter['lower']) + 1e-9:
+            notes.append(f"any value of {fmt(shown_high)} or lower works")
+        elif parameter['direction'] == 'increase' and shown_high >= float(parameter['upper']) - 1e-9:
+            notes.append(f"any value of {fmt(shown_low)} or higher works")
+        else:
+            notes.append(f"any value from {fmt(shown_low)} to {fmt(shown_high)} works")
+    if notes:
+        text += f" ({'; '.join(notes)})"
+    return {
+        'issue_id': parameter['issue_id'],
+        'direction': parameter['direction'],
+        'rank_pair': parameter['rank_pair'],
+        'current_value': parameter['current'],
+        'suggested_value': suggested,
+        'feasible_min': shown_low,
+        'feasible_max': shown_high,
+        'recommendation': text + ".",
+    }
 
 
 def _iter_positive_compositions(total, n_parts):
@@ -2463,286 +3136,156 @@ def _iter_positive_compositions(total, n_parts):
             yield [first] + tail
 
 
-def _format_exact_recommendation(issue_id, meta, new_value):
+def _iter_integer_adjustments(parameters):
     """
-    Builds one recommendation record from an exact, feasibility-checked target value.
+    Yields candidate values for integer inputs ordered by total change, with every
+    input moved by at least one unit in its required direction.
     """
-    bound = meta.get('bound')
-    direction = 'decrease' if bound == 'lb' else 'increase'
-    label = meta.get('label', issue_id)
-    current_value = meta.get('current_value')
-    if current_value is not None and abs(float(new_value) - float(current_value)) <= 1e-9:
-        return None
+    if not parameters:
+        yield ()
+        return
 
-    if meta.get('value_type') == 'int':
-        current_render = int(round(float(current_value))) if current_value is not None else current_value
-        new_render = int(round(float(new_value)))
-    else:
-        current_render = float(round(float(current_value), 3)) if current_value is not None else current_value
-        new_render = float(round(float(new_value), 3))
+    limits = []
+    for parameter in parameters:
+        if parameter['direction'] == 'decrease':
+            limits.append(int(parameter['current']) - int(parameter['lower']))
+        else:
+            limits.append(int(parameter['upper']) - int(parameter['current']))
+    if min(limits) < 1:
+        return
 
-    return {
-        'issue_id': issue_id,
-        'direction': direction,
-        'rank_pair': meta.get('rank_pair'),
-        'recommendation': (
-            f"{direction.capitalize()} {label} from {current_render} "
-            f"to about {new_render}."
-        )
-    }
+    max_total = sum(limits)
+    if len(parameters) > 1:
+        max_total = min(max_total, len(parameters) + INCONSISTENCY_MAX_COMBINED_CHANGE)
+
+    for total in range(len(parameters), max_total + 1):
+        for deltas in _iter_positive_compositions(total, len(parameters)):
+            if any(delta > limit for delta, limit in zip(deltas, limits)):
+                continue
+            yield tuple(
+                int(parameter['current']) + (delta if parameter['direction'] == 'increase' else -delta)
+                for parameter, delta in zip(parameters, deltas)
+            )
 
 
-def _find_issue_set_exact_recommendations(cards_arrangement,
-                                          z_value,
-                                          e_value,
-                                          srf_method,
-                                          active_issues,
-                                          issue_meta,
-                                          extra_constraints=None,
-                                          min_delta=1.0,
-                                          max_total_change=250):
+def _extend_integer_range(context, parameter, value):
     """
-    Solves a discrete E^R-style restoration for one EI subset.
-    Currently specialized for SRF-II (gap/e0 changes), with beta=1.
+    Continues past the nearest restoring value of a single integer input and
+    returns the farthest value that is still verified as feasible.
     """
-    if srf_method != 'srf_ii' or not active_issues:
-        return None
+    step = 1 if parameter['direction'] == 'increase' else -1
+    limit = parameter['upper'] if step > 0 else parameter['lower']
+    extended = value
+    for _ in range(INCONSISTENCY_RANGE_SCAN_STEPS):
+        candidate = extended + step
+        if (step > 0 and candidate > limit) or (step < 0 and candidate < limit):
+            break
+        if not _is_adjustment_feasible(context, {parameter['key']: candidate}):
+            break
+        extended = candidate
+    return extended
 
-    descriptors = []
-    used_keys = set()
-    for issue_id in sorted(active_issues):
-        meta = issue_meta.get(issue_id, {})
-        bound = meta.get('bound')
-        if bound not in {'lb', 'ub'}:
+
+def _restore_from_ratio_seeds(context, parameters, ratio_seeds):
+    """
+    Restoration for sets changing several ratio inputs at once. Their joint range
+    has no closed form, so the ratios observed in the EI solution are rounded
+    outward and checked against the exact model.
+    """
+    adjustments = {}
+    for parameter in parameters:
+        seed = ratio_seeds.get(parameter['key'])
+        if seed is None or not np.isfinite(seed):
             return None
-        sign = -1 if bound == 'lb' else 1
+        bound = parameter['ratio']['bound']
+        if bound == 'lb':
+            value = float(np.floor(seed * 100) / 100)
+        elif bound == 'ub':
+            value = float(np.ceil(seed * 100) / 100)
+        else:
+            value = float(round(seed, 3))
 
-        gap_match = re.match(r'^gap_(\d+)_(plus|minus)$', issue_id)
-        if gap_match:
-            prev_rank = int(gap_match.group(1))
-            key = ('gap', prev_rank)
-            if key in used_keys:
+        if parameter['direction'] == 'decrease':
+            value = max(value, float(parameter['lower']))
+            if value >= float(parameter['current']):
                 return None
-            used_keys.add(key)
-            descriptors.append({
-                'issue_id': issue_id,
-                'kind': 'gap',
-                'prev_rank': prev_rank,
-                'sign': sign,
-                'meta': meta
-            })
-            continue
-
-        if issue_id.startswith('z_linear_'):
-            key = ('e0', None)
-            if key in used_keys:
+        else:
+            value = min(value, float(parameter['upper']))
+            if value <= float(parameter['current']):
                 return None
-            used_keys.add(key)
-            descriptors.append({
-                'issue_id': issue_id,
-                'kind': 'e0',
-                'sign': sign,
-                'meta': meta
-            })
+        adjustments[parameter['key']] = value
+
+    if not _is_adjustment_feasible(context, adjustments):
+        return None
+    return [_ratio_recommendation(parameter, adjustments[parameter['key']]) for parameter in parameters]
+
+
+def _search_restoration(context, parameters, ratio_seeds):
+    """
+    Finds the smallest verified change of `parameters` that makes the weight
+    calculation feasible. Returns its recommendations, or None.
+    """
+    integer_parameters = [parameter for parameter in parameters if parameter['ratio'] is None]
+    ratio_parameters = [parameter for parameter in parameters if parameter['ratio'] is not None]
+    if len(ratio_parameters) > 1:
+        if integer_parameters:
+            return None
+        return _restore_from_ratio_seeds(context, ratio_parameters, ratio_seeds)
+    ratio_parameter = ratio_parameters[0] if ratio_parameters else None
+    stop_below = max(0, context['remaining_checks'] - INCONSISTENCY_MAX_CHECKS_PER_SET)
+
+    for integer_values in _iter_integer_adjustments(integer_parameters):
+        if context['remaining_checks'] <= stop_below:
+            return None
+        adjustments = {
+            parameter['key']: value
+            for parameter, value in zip(integer_parameters, integer_values)
+        }
+
+        if ratio_parameter is None:
+            if not _is_adjustment_feasible(context, adjustments):
+                continue
+            if len(integer_parameters) == 1:
+                extended = _extend_integer_range(context, integer_parameters[0], integer_values[0])
+                return [_integer_recommendation(integer_parameters[0], integer_values[0], extended)]
+            return [
+                _integer_recommendation(parameter, value)
+                for parameter, value in zip(integer_parameters, integer_values)
+            ]
+
+        interval = _feasible_ratio_parameter_interval(context, adjustments, ratio_parameter)
+        if interval is None:
             continue
-
-        return None
-
-    if not descriptors:
-        return None
-    if len(descriptors) > 4:
-        return None
-
-    observed_gaps = _observed_gap_counts_by_prev_rank(cards_arrangement)
-    current_e0 = int(e_value)
-    n_parts = len(descriptors)
-    min_total = n_parts  # each active EI issue must be changed at least by one unit
-    max_total = max(min_total, int(max_total_change))
-    beta = float(INCONSISTENCY_RESTORATION_BETA)
-
-    for total_delta in range(min_total, max_total + 1):
-        candidate_vectors = []
-        for deltas in _iter_positive_compositions(total_delta, n_parts):
-            # beta=1 by default, but keep the objective expression explicit.
-            objective_value = 0.0
-            for descriptor, delta_units in zip(descriptors, deltas):
-                if descriptor['kind'] == 'e0':
-                    objective_value += beta * float(delta_units)
-                else:
-                    objective_value += float(delta_units)
-            candidate_vectors.append((objective_value, tuple(deltas)))
-
-        candidate_vectors.sort(key=lambda item: (item[0], item[1]))
-        for _, deltas in candidate_vectors:
-            gap_overrides = {}
-            candidate_values = {}
-            candidate_e0 = current_e0
-            invalid = False
-
-            for descriptor, delta_units in zip(descriptors, deltas):
-                meta = descriptor['meta']
-                current_value = meta.get('current_value')
-                if current_value is None:
-                    if descriptor['kind'] == 'gap':
-                        current_value = observed_gaps.get(descriptor['prev_rank'], 0)
-                    elif descriptor['kind'] == 'e0':
-                        current_value = current_e0
-                    else:
-                        current_value = 0
-
-                proposed_value = float(current_value) + descriptor['sign'] * float(delta_units)
-                min_value = meta.get('min_value')
-                max_value = meta.get('max_value')
-                if min_value is not None and proposed_value < float(min_value) - 1e-9:
-                    invalid = True
-                    break
-                if max_value is not None and proposed_value > float(max_value) + 1e-9:
-                    invalid = True
-                    break
-
-                if meta.get('value_type') == 'int':
-                    proposed_value = int(round(proposed_value))
-
-                if descriptor['kind'] == 'gap':
-                    if int(proposed_value) < 0:
-                        invalid = True
-                        break
-                    gap_overrides[int(descriptor['prev_rank'])] = int(proposed_value)
-                elif descriptor['kind'] == 'e0':
-                    if int(proposed_value) < 0:
-                        invalid = True
-                        break
-                    candidate_e0 = int(proposed_value)
-                else:
-                    invalid = True
-                    break
-
-                candidate_values[descriptor['issue_id']] = proposed_value
-
-            if invalid:
-                continue
-
-            if not _is_configuration_feasible(
-                cards_arrangement,
-                z_value,
-                candidate_e0,
-                srf_method='srf_ii',
-                extra_constraints=extra_constraints,
-                min_delta=min_delta,
-                gap_overrides=gap_overrides if gap_overrides else None
-            ):
-                continue
-
-            recommendations = []
-            for descriptor in descriptors:
-                issue_id = descriptor['issue_id']
-                rec = _format_exact_recommendation(issue_id, descriptor['meta'], candidate_values[issue_id])
-                if rec is not None:
-                    recommendations.append(rec)
-            if recommendations:
-                return recommendations
+        picked = _pick_verified_ratio_values(context, adjustments, ratio_parameter, *interval)
+        if picked is None:
+            continue
+        suggested, shown_low, shown_high = picked
+        recommendations = [
+            _integer_recommendation(parameter, value)
+            for parameter, value in zip(integer_parameters, integer_values)
+        ]
+        recommendations.append(_ratio_recommendation(ratio_parameter, suggested, shown_low, shown_high))
+        return recommendations
 
     return None
 
 
-def _find_single_issue_exact_recommendation(cards_arrangement,
-                                            z_value,
-                                            e_value,
-                                            srf_method,
-                                            issue_id,
-                                            issue_meta,
-                                            extra_constraints=None,
-                                            min_delta=1.0):
+def _merge_issue_parameters(active_issues, issue_meta):
     """
-    For one-issue suggestions, find the nearest actually feasible fix by direct feasibility search.
+    Collects the distinct inputs changed by one EI issue set, or returns None when
+    the set cannot be turned into one consistent edit of the user inputs.
     """
-    meta = issue_meta.get(issue_id, {})
-    bound = meta.get('bound')
-    direction = 'decrease' if bound == 'lb' else 'increase'
-    label = meta.get('label', issue_id)
-
-    gap_match = re.match(r'^gap_(\d+)_(plus|minus)$', issue_id)
-    if gap_match and srf_method in {'srf', 'srf_ii'}:
-        prev_rank = int(gap_match.group(1))
-        current_blank = int(meta.get('current_value', 0))
-        for step in range(1, 201):
-            candidate_blank = current_blank - step if direction == 'decrease' else current_blank + step
-            if candidate_blank < 0:
-                continue
-            if _is_configuration_feasible(
-                cards_arrangement,
-                z_value,
-                e_value,
-                srf_method=srf_method,
-                extra_constraints=extra_constraints,
-                min_delta=min_delta,
-                gap_overrides={prev_rank: candidate_blank}
-            ):
-                return {
-                    'issue_id': issue_id,
-                    'direction': direction,
-                    'rank_pair': meta.get('rank_pair'),
-                    'recommendation': (
-                        f"{direction.capitalize()} {label} from {current_blank} "
-                        f"to about {candidate_blank}."
-                    )
-                }
-        return None
-
-    if issue_id.startswith('z_exact_') and srf_method == 'srf':
-        current_z = float(meta.get('current_value', z_value))
-        step_size = 0.01
-        max_steps = 20_000
-        for step in range(1, max_steps + 1):
-            candidate_z = current_z - step * step_size if direction == 'decrease' else current_z + step * step_size
-            if candidate_z < 1.01:
-                continue
-            candidate_z = float(round(candidate_z, 3))
-            if _is_configuration_feasible(
-                cards_arrangement,
-                candidate_z,
-                e_value,
-                srf_method=srf_method,
-                extra_constraints=extra_constraints,
-                min_delta=min_delta
-            ):
-                return {
-                    'issue_id': issue_id,
-                    'direction': direction,
-                    'rank_pair': meta.get('rank_pair'),
-                    'recommendation': (
-                        f"{direction.capitalize()} {label} from {current_z} "
-                        f"to about {candidate_z}."
-                    )
-                }
-        return None
-
-    if issue_id.startswith('z_linear_') and srf_method == 'srf_ii':
-        current_e0 = int(meta.get('current_value', e_value))
-        for step in range(1, 1001):
-            candidate_e0 = current_e0 - step if direction == 'decrease' else current_e0 + step
-            if candidate_e0 < 0:
-                continue
-            if _is_configuration_feasible(
-                cards_arrangement,
-                z_value,
-                candidate_e0,
-                srf_method=srf_method,
-                extra_constraints=extra_constraints,
-                min_delta=min_delta
-            ):
-                return {
-                    'issue_id': issue_id,
-                    'direction': direction,
-                    'rank_pair': meta.get('rank_pair'),
-                    'recommendation': (
-                        f"{direction.capitalize()} {label} from {current_e0} "
-                        f"to about {candidate_e0}."
-                    )
-                }
-        return None
-
-    return None
+    parameters = {}
+    for issue_id in active_issues:
+        parameter = issue_meta[issue_id].get('parameter')
+        if parameter is None:
+            return None
+        existing = parameters.get(parameter['key'])
+        if existing is None:
+            parameters[parameter['key']] = {**parameter, 'issue_id': issue_id}
+        elif existing['direction'] != parameter['direction']:
+            return None
+    return list(parameters.values())
 
 
 def identify_inconsistency_recommendations(cards_arrangement,
@@ -2755,21 +3298,36 @@ def identify_inconsistency_recommendations(cards_arrangement,
                                            modular_options=None,
                                            modular_profile=None):
     """
-    Iterative E^I-style inconsistency identification and restoration hints.
-    Returns up to `max_suggestions` minimal-cardinality alternatives.
+    Iterative E^I-style inconsistency identification with verified restoration.
+
+    A MILP relaxation proposes minimal-cardinality sets of inputs to change. Each
+    proposed set is then searched against the exact model used by the weight
+    calculation, and only changes that make that model feasible are reported, so
+    applying any one suggestion restores consistency in a single step. Rejected
+    sets do not use up suggestion slots. Returns up to `max_suggestions` alternatives.
     """
     max_suggestions = int(max_suggestions) if str(max_suggestions).strip() != '' else 3
     max_suggestions = max(1, min(max_suggestions, 20))
 
-    (comp_rule_within,
-     comp_rule_successive,
-     ratio_mode,
-     normalized,
-     restoration_method) = _resolve_inconsistency_structure(
-        srf_method=srf_method,
+    config = _resolve_model_configuration(
+        srf_method,
         modular_options=modular_options,
         modular_profile=modular_profile
     )
+    comp_rule_within = config['comp_rule_within']
+    ratio_mode = config['ratio_mode']
+    extra_cond = extra_constraints if isinstance(extra_constraints, dict) else None
+
+    # With dynamic unit weights, imprecise gap inputs only keep the minimum
+    # blank-card spacing (see `_build_srf_model`), i.e. the fully-flexible rule.
+    if config['dynamic_unit_weight'] and config['comp_rule_successive'] in {
+        'interval-constrained',
+        'probability-distribution',
+        'hfl-linguistic-interval',
+    }:
+        gap_rule = 'fully-flexible'
+    else:
+        gap_rule = config['comp_rule_successive']
 
     model = gp.Model("SRF_Inconsistency_Identification")
     model.setParam("OutputFlag", 0)
@@ -2781,9 +3339,9 @@ def identify_inconsistency_recommendations(cards_arrangement,
     }
 
     # Shared scale variable used for fixed/interval spacing styles.
-    if comp_rule_successive in ['fixed-spacing', 'interval-constrained', 'probability-distribution']:
+    if gap_rule in ['fixed-spacing', 'interval-constrained', 'probability-distribution']:
         spacing_scale = model.addVar(lb=max(float(min_delta), 1e-6), name="ei_spacing_scale")
-    elif comp_rule_successive == 'hfl-linguistic-interval':
+    elif gap_rule == 'hfl-linguistic-interval':
         spacing_scale = model.addVar(lb=1e-6, name="ei_hfl_scale")
     else:
         spacing_scale = None
@@ -2805,504 +3363,344 @@ def identify_inconsistency_recommendations(cards_arrangement,
 
     issue_vars = {}
     issue_meta = {}
-    original_z_value = z_value
-    original_e_value = e_value
 
-    # Successive-rank constraints as relaxable EI issues.
+    # Classical belief-degree SRF reports the solution of the expected inputs, so
+    # each distribution is edited as a whole (z values rescaled around 1,
+    # blank-card values shifted).
+    expected_model_check = srf_method == 'belief_degree_imprecise_srf'
+    z_scale_parameters = _z_scale_parameters(z_value) if expected_model_check else (None, None)
+    e_shift_parameters = {}
+
+    # Successive-rank constraints as relaxable EI issues. A decrease is capped at
+    # the smallest admissible input (e.g. zero blank cards), so the relaxation
+    # never relies on a change the user cannot make; an input already at its
+    # limit keeps its constraint hard.
     for i in range(1, len(sorted_ranks)):
         prev_rank = sorted_ranks[i - 1]
         curr_rank = sorted_ranks[i]
         prev_idx = rank_groups[prev_rank][0]
         curr_idx = rank_groups[curr_rank][0]
         rank_pair = [int(prev_rank), int(curr_rank)]
-        observed_gap = int(max(0, rank_white_count[prev_rank] - 1))
+        pair_label = f"Rank {prev_rank} and Rank {curr_rank}"
+        units = int(rank_white_count[prev_rank])
+        observed_gap = units - 1
         diff_expr = weights[curr_idx] - weights[prev_idx]
+        if expected_model_check:
+            e_shift_parameters[int(prev_rank)] = _e_shift_parameters(e_value, prev_rank, pair_label, rank_pair)
 
-        if comp_rule_successive == 'fixed-spacing':
-            target = spacing_scale * rank_white_count[prev_rank]
-            expr = diff_expr - target
-            y_plus = _add_relaxable_issue(
-                model, issue_vars, issue_meta,
-                issue_id=f"gap_{prev_rank}_plus",
-                expr=expr,
-                bound='lb',
-                metadata={
-                    'label': f"blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                    'current_value': observed_gap,
-                    'value_type': 'int',
-                    'min_value': 0,
-                    'rank_pair': rank_pair,
-                    'scale_source': 'gap',
-                    'scale_var': spacing_scale
-                }
+        e_cloud = {}
+        if gap_rule == 'probability-distribution' and isinstance(e_value, dict):
+            e_cloud = _extract_probability_pairs(
+                e_value,
+                value_prefix=f"e-value-{prev_rank}-",
+                beta_prefix=f"e-beta-{prev_rank}-",
             )
-            y_minus = _add_relaxable_issue(
-                model, issue_vars, issue_meta,
-                issue_id=f"gap_{prev_rank}_minus",
-                expr=expr,
-                bound='ub',
-                metadata={
-                    'label': f"blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                    'current_value': observed_gap,
-                    'value_type': 'int',
-                    'min_value': 0,
-                    'rank_pair': rank_pair,
-                    'scale_source': 'gap',
-                    'scale_var': spacing_scale
-                }
-            )
-            model.addConstr(y_plus + y_minus <= 1, f"ei_gap_{prev_rank}_exclusive")
+        has_interval_bounds = (
+            gap_rule == 'interval-constrained'
+            and isinstance(e_value, dict)
+            and f'emin_{prev_rank}' in e_value
+            and f'emax_{prev_rank}' in e_value
+        )
 
-        elif comp_rule_successive == 'fully-flexible':
-            expr = diff_expr - (min_delta * rank_white_count[prev_rank])
-            _add_relaxable_issue(
-                model, issue_vars, issue_meta,
-                issue_id=f"gap_{prev_rank}_min",
-                expr=expr,
-                bound='lb',
-                metadata={
-                    'label': f"minimum blank cards gap between Rank {prev_rank} and Rank {curr_rank}",
-                    'current_value': observed_gap,
-                    'value_type': 'int',
-                    'min_value': 0,
-                    'rank_pair': rank_pair,
-                    'scale_source': 'none',
-                    'scale_var': None
-                }
-            )
-
-        elif comp_rule_successive == 'interval-constrained':
-            if rank_white_count[prev_rank] == 1:
-                target = spacing_scale * rank_white_count[prev_rank]
-                expr = diff_expr - target
-                y_plus = _add_relaxable_issue(
+        if gap_rule == 'fully-flexible':
+            if units > 1:
+                _add_relaxable_issue(
                     model, issue_vars, issue_meta,
-                    issue_id=f"gap_{prev_rank}_plus",
-                    expr=expr,
+                    issue_id=f"gap_{prev_rank}_min",
+                    expr=diff_expr - (min_delta * units),
                     bound='lb',
-                    metadata={
-                        'label': f"blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': observed_gap,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
+                    metadata={'parameter': _input_parameter(
+                        ('gap', int(prev_rank)),
+                        f"minimum blank cards gap between {pair_label}",
+                        observed_gap, 'decrease', lower=0, rank_pair=rank_pair
+                    )},
+                    residual_cap=min_delta * observed_gap
                 )
-                y_minus = _add_relaxable_issue(
-                    model, issue_vars, issue_meta,
-                    issue_id=f"gap_{prev_rank}_minus",
-                    expr=expr,
-                    bound='ub',
-                    metadata={
-                        'label': f"blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': observed_gap,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
-                )
-                model.addConstr(y_plus + y_minus <= 1, f"ei_gap_{prev_rank}_exclusive")
             else:
+                model.addConstr(diff_expr >= min_delta * units, f"ei_hard_gap_{prev_rank}_min")
+
+        elif has_interval_bounds or e_cloud:
+            if has_interval_bounds:
                 e_min = int(e_value[f'emin_{prev_rank}'])
                 e_max = int(e_value[f'emax_{prev_rank}'])
-                expr_min = diff_expr - spacing_scale * (e_min + 1)
-                expr_max = diff_expr - spacing_scale * (e_max + 1)
-                _add_relaxable_issue(
-                    model, issue_vars, issue_meta,
-                    issue_id=f"gap_min_{prev_rank}",
-                    expr=expr_min,
-                    bound='lb',
-                    metadata={
-                        'label': f"minimum blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': e_min,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
+                issue_prefix = "gap"
+                min_parameter = _input_parameter(
+                    ('e_key', f'emin_{prev_rank}'), f"minimum blank cards between {pair_label}",
+                    e_min, 'decrease', lower=0, rank_pair=rank_pair
+                ) if e_min > 0 else None
+                max_parameter = _input_parameter(
+                    ('e_key', f'emax_{prev_rank}'), f"maximum blank cards between {pair_label}",
+                    e_max, 'increase', upper=e_max + INCONSISTENCY_MAX_GAP_INCREASE, rank_pair=rank_pair
                 )
-                _add_relaxable_issue(
-                    model, issue_vars, issue_meta,
-                    issue_id=f"gap_max_{prev_rank}",
-                    expr=expr_max,
-                    bound='ub',
-                    metadata={
-                        'label': f"maximum blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': e_max,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
-                )
-
-        elif comp_rule_successive == 'probability-distribution':
-            if rank_white_count[prev_rank] == 1:
-                target = spacing_scale * rank_white_count[prev_rank]
-                expr = diff_expr - target
-                y_plus = _add_relaxable_issue(
-                    model, issue_vars, issue_meta,
-                    issue_id=f"gap_{prev_rank}_plus",
-                    expr=expr,
-                    bound='lb',
-                    metadata={
-                        'label': f"blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': observed_gap,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
-                )
-                y_minus = _add_relaxable_issue(
-                    model, issue_vars, issue_meta,
-                    issue_id=f"gap_{prev_rank}_minus",
-                    expr=expr,
-                    bound='ub',
-                    metadata={
-                        'label': f"blank cards between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': observed_gap,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
-                )
-                model.addConstr(y_plus + y_minus <= 1, f"ei_gap_{prev_rank}_exclusive")
             else:
-                e_cloud = _extract_probability_pairs(
-                    e_value,
-                    value_prefix=f"e-value-{prev_rank}-",
-                    beta_prefix=f"e-beta-{prev_rank}-",
-                )
-                if not e_cloud:
-                    e_cloud = {float(observed_gap): 1.0}
                 e_cloud = _normalize_probability_cloud(e_cloud)
                 e_min = int(np.floor(min(e_cloud.keys())))
                 e_max = int(np.ceil(max(e_cloud.keys())))
+                issue_prefix = "gap_support"
+                if expected_model_check:
+                    min_parameter, max_parameter = e_shift_parameters[int(prev_rank)]
+                else:
+                    min_parameter = _input_parameter(
+                        ('e_support', int(prev_rank), 'min'),
+                        f"smallest blank-card value in the belief distribution between {pair_label}",
+                        e_min, 'decrease', lower=0, rank_pair=rank_pair
+                    ) if e_min > 0 else None
+                    max_parameter = _input_parameter(
+                        ('e_support', int(prev_rank), 'max'),
+                        f"largest blank-card value in the belief distribution between {pair_label}",
+                        e_max, 'increase', upper=e_max + INCONSISTENCY_MAX_GAP_INCREASE, rank_pair=rank_pair
+                    )
 
-                expr_min = diff_expr - spacing_scale * (e_min + 1)
-                expr_max = diff_expr - spacing_scale * (e_max + 1)
+            if min_parameter is not None:
                 _add_relaxable_issue(
                     model, issue_vars, issue_meta,
-                    issue_id=f"gap_support_min_{prev_rank}",
-                    expr=expr_min,
+                    issue_id=f"{issue_prefix}_min_{prev_rank}",
+                    expr=diff_expr - spacing_scale * (e_min + 1),
                     bound='lb',
-                    metadata={
-                        'label': f"minimum blank-card support between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': e_min,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
+                    metadata={'parameter': min_parameter},
+                    residual_cap=spacing_scale * e_min
                 )
+            else:
+                model.addConstr(diff_expr >= spacing_scale * (e_min + 1), f"ei_hard_{issue_prefix}_min_{prev_rank}")
+            if max_parameter is not None:
                 _add_relaxable_issue(
                     model, issue_vars, issue_meta,
-                    issue_id=f"gap_support_max_{prev_rank}",
-                    expr=expr_max,
+                    issue_id=f"{issue_prefix}_max_{prev_rank}",
+                    expr=diff_expr - spacing_scale * (e_max + 1),
                     bound='ub',
-                    metadata={
-                        'label': f"maximum blank-card support between Rank {prev_rank} and Rank {curr_rank}",
-                        'current_value': e_max,
-                        'value_type': 'int',
-                        'min_value': 0,
-                        'rank_pair': rank_pair,
-                        'scale_source': 'gap',
-                        'scale_var': spacing_scale
-                    }
+                    metadata={'parameter': max_parameter}
                 )
+            else:
+                model.addConstr(diff_expr <= spacing_scale * (e_max + 1), f"ei_hard_{issue_prefix}_max_{prev_rank}")
 
-        elif comp_rule_successive == 'hfl-linguistic-interval':
+        elif gap_rule == 'hfl-linguistic-interval':
             r_min_term = int(e_value.get(f'rmin_{prev_rank}', 1))
             r_max_term = int(e_value.get(f'rmax_{prev_rank}', r_min_term))
             r_min = _map_hfl_card_term(r_min_term)
             r_max = _map_hfl_card_term(r_max_term)
 
-            expr_min = diff_expr - spacing_scale * r_min
-            expr_max = diff_expr - spacing_scale * r_max
-            _add_relaxable_issue(
+            if r_min > HFL_CARD_MIN_TERM:
+                _add_relaxable_issue(
+                    model, issue_vars, issue_meta,
+                    issue_id=f"hfl_gap_min_{prev_rank}",
+                    expr=diff_expr - spacing_scale * r_min,
+                    bound='lb',
+                    metadata={'parameter': _input_parameter(
+                        ('e_key', f'rmin_{prev_rank}'),
+                        f"HFL lower gap term between {pair_label}",
+                        r_min_term, 'decrease', lower=HFL_CARD_MIN_TERM, rank_pair=rank_pair
+                    )},
+                    residual_cap=spacing_scale * (r_min - HFL_CARD_MIN_TERM)
+                )
+            else:
+                model.addConstr(diff_expr >= spacing_scale * r_min, f"ei_hard_hfl_gap_min_{prev_rank}")
+            if r_max < HFL_CARD_MAX_TERM:
+                _add_relaxable_issue(
+                    model, issue_vars, issue_meta,
+                    issue_id=f"hfl_gap_max_{prev_rank}",
+                    expr=diff_expr - spacing_scale * r_max,
+                    bound='ub',
+                    metadata={'parameter': _input_parameter(
+                        ('e_key', f'rmax_{prev_rank}'),
+                        f"HFL upper gap term between {pair_label}",
+                        r_max_term, 'increase', upper=HFL_CARD_MAX_TERM, rank_pair=rank_pair
+                    )},
+                    residual_cap=spacing_scale * (HFL_CARD_MAX_TERM - r_max)
+                )
+            else:
+                model.addConstr(diff_expr <= spacing_scale * r_max, f"ei_hard_hfl_gap_max_{prev_rank}")
+
+        else:
+            # Exact spacing: fixed-spacing, or interval/probability rules without
+            # explicit bounds for this gap.
+            label = f"blank cards between {pair_label}"
+            expr = diff_expr - spacing_scale * units
+            y_increase = _add_relaxable_issue(
                 model, issue_vars, issue_meta,
-                issue_id=f"hfl_gap_min_{prev_rank}",
-                expr=expr_min,
-                bound='lb',
-                metadata={
-                    'label': f"HFL lower gap term between Rank {prev_rank} and Rank {curr_rank}",
-                    'current_value': r_min,
-                    'value_type': 'int',
-                    'min_value': HFL_CARD_MIN_TERM,
-                    'max_value': HFL_CARD_MAX_TERM,
-                    'rank_pair': rank_pair,
-                    'scale_source': 'gap',
-                    'scale_var': spacing_scale
-                }
-            )
-            _add_relaxable_issue(
-                model, issue_vars, issue_meta,
-                issue_id=f"hfl_gap_max_{prev_rank}",
-                expr=expr_max,
+                issue_id=f"gap_{prev_rank}_minus",
+                expr=expr,
                 bound='ub',
-                metadata={
-                    'label': f"HFL upper gap term between Rank {prev_rank} and Rank {curr_rank}",
-                    'current_value': r_max,
-                    'value_type': 'int',
-                    'min_value': HFL_CARD_MIN_TERM,
-                    'max_value': HFL_CARD_MAX_TERM,
-                    'rank_pair': rank_pair,
-                    'scale_source': 'gap',
-                    'scale_var': spacing_scale
-                }
+                metadata={'parameter': _input_parameter(
+                    ('gap', int(prev_rank)), label, observed_gap, 'increase',
+                    upper=observed_gap + INCONSISTENCY_MAX_GAP_INCREASE, rank_pair=rank_pair
+                )}
             )
+            if units > 1:
+                y_decrease = _add_relaxable_issue(
+                    model, issue_vars, issue_meta,
+                    issue_id=f"gap_{prev_rank}_plus",
+                    expr=expr,
+                    bound='lb',
+                    metadata={'parameter': _input_parameter(
+                        ('gap', int(prev_rank)), label, observed_gap, 'decrease',
+                        lower=0, rank_pair=rank_pair
+                    )},
+                    residual_cap=spacing_scale * observed_gap
+                )
+                model.addConstr(y_decrease + y_increase <= 1, f"ei_gap_{prev_rank}_exclusive")
+            else:
+                model.addConstr(expr >= 0, f"ei_hard_gap_{prev_rank}_plus")
 
     # Ratio issues
     min_index = rank_groups[min(sorted_ranks)][0]
     max_index = rank_groups[max(sorted_ranks)][0]
     min_weight_var = weights[min_index]
+    max_weight_var = weights[max_index]
+    global_pair = ('global',)
 
     if ratio_mode == 'exact-ratio':
         z_exact = float(z_value)
-        expr = weights[max_index] - z_exact * weights[min_index]
-        y_plus = _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_exact_plus",
-            expr=expr,
-            bound='lb',
-            metadata={
-                'label': "z ratio",
-                'current_value': z_exact,
-                'value_type': 'float',
-                'min_value': 1.01,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
+        ratio = {'constraints': ['z_ratio_constraint'], 'pair': global_pair, 'bound': 'eq'}
+        y_decrease = _add_ratio_issue(
+            model, issue_vars, issue_meta, "z_exact_plus",
+            max_weight_var, min_weight_var, z_exact, 'lb',
+            _input_parameter(('z',), "z ratio", z_exact, 'decrease', value_type='float',
+                             lower=INCONSISTENCY_Z_MIN, ratio=ratio),
+            floor_value=INCONSISTENCY_Z_MIN
         )
-        y_minus = _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_exact_minus",
-            expr=expr,
-            bound='ub',
-            metadata={
-                'label': "z ratio",
-                'current_value': z_exact,
-                'value_type': 'float',
-                'min_value': 1.01,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
+        y_increase = _add_ratio_issue(
+            model, issue_vars, issue_meta, "z_exact_minus",
+            max_weight_var, min_weight_var, z_exact, 'ub',
+            _input_parameter(('z',), "z ratio", z_exact, 'increase', value_type='float',
+                             upper=INCONSISTENCY_Z_MAX, ratio=ratio),
+            ceiling_value=INCONSISTENCY_Z_MAX
         )
-        model.addConstr(y_plus + y_minus <= 1, "ei_z_exact_exclusive")
+        if y_decrease is not None and y_increase is not None:
+            model.addConstr(y_decrease + y_increase <= 1, "ei_z_exact_exclusive")
 
     elif ratio_mode == 'linear-spacing':
         e0_anchor = _estimate_linear_spacing_e0_anchor(e_value)
-        z_linear = (
+        bar_sum = (
             (cards_arrangement['rank'].max() - 1)
             + cards_arrangement['class'].to_list().count('white')
-            + (e0_anchor + 1)
-        ) / (e0_anchor + 1)
-        expr = weights[max_index] - z_linear * weights[min_index]
-        y_plus = _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_linear_plus",
-            expr=expr,
-            bound='lb',
-            metadata={
-                'label': "e0 value (SRF-II)",
-                'current_value': int(round(e0_anchor)),
-                'value_type': 'int',
-                'min_value': 0,
-                'scale_source': 'none',
-                'den_var': min_weight_var
-            }
         )
-        y_minus = _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_linear_minus",
-            expr=expr,
-            bound='ub',
-            metadata={
-                'label': "e0 value (SRF-II)",
-                'current_value': int(round(e0_anchor)),
-                'value_type': 'int',
-                'min_value': 0,
-                'scale_source': 'none',
-                'den_var': min_weight_var
-            }
-        )
-        model.addConstr(y_plus + y_minus <= 1, "ei_z_linear_exclusive")
+        z_linear = (bar_sum + (e0_anchor + 1)) / (e0_anchor + 1)
+        raise_e0, lower_e0 = _linear_spacing_e0_parameters(e_value)
+        y_decrease = None
+        y_increase = None
+        if raise_e0 is not None:
+            y_decrease = _add_ratio_issue(
+                model, issue_vars, issue_meta, "z_linear_plus",
+                max_weight_var, min_weight_var, z_linear, 'lb', raise_e0,
+                floor_value=1.0
+            )
+        else:
+            model.addConstr(max_weight_var - z_linear * min_weight_var >= 0, "ei_hard_z_linear_plus")
+        if lower_e0 is not None:
+            y_increase = _add_ratio_issue(
+                model, issue_vars, issue_meta, "z_linear_minus",
+                max_weight_var, min_weight_var, z_linear, 'ub', lower_e0,
+                ceiling_value=float(bar_sum + 1)
+            )
+        else:
+            model.addConstr(max_weight_var - z_linear * min_weight_var <= 0, "ei_hard_z_linear_minus")
+        if y_decrease is not None and y_increase is not None:
+            model.addConstr(y_decrease + y_increase <= 1, "ei_z_linear_exclusive")
 
-    elif ratio_mode == 'interval-total':
-        z_min = float(z_value['zmin'])
-        z_max = float(z_value['zmax'])
-        expr_min = weights[max_index] - z_min * weights[min_index]
-        expr_max = weights[max_index] - z_max * weights[min_index]
-        _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_interval_min",
-            expr=expr_min,
-            bound='lb',
-            metadata={
-                'label': "z lower bound",
-                'current_value': z_min,
-                'value_type': 'float',
-                'min_value': 1.01,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
+    elif ratio_mode in {'interval-total', 'probability-cloud'}:
+        if ratio_mode == 'interval-total':
+            z_min = float(z_value['zmin'])
+            z_max = float(z_value['zmax'])
+            min_key, max_key = ('z_key', 'zmin'), ('z_key', 'zmax')
+            min_label, max_label = "z lower bound", "z upper bound"
+        else:
+            z_cloud = _normalize_probability_cloud(_extract_probability_pairs(
+                z_value,
+                value_prefix='z-value-',
+                beta_prefix='z-beta-'
+            ))
+            z_min = float(min(z_cloud.keys()))
+            z_max = float(max(z_cloud.keys()))
+            min_key, max_key = ('z_support', 'min'), ('z_support', 'max')
+            min_label = "smallest z value in the belief distribution"
+            max_label = "largest z value in the belief distribution"
+
+        min_parameter = _input_parameter(
+            min_key, min_label, z_min, 'decrease', value_type='float', lower=INCONSISTENCY_Z_MIN,
+            ratio={'constraints': ['z_ratio_constraint_min'], 'pair': global_pair, 'bound': 'lb'}
         )
-        _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_interval_max",
-            expr=expr_max,
-            bound='ub',
-            metadata={
-                'label': "z upper bound",
-                'current_value': z_max,
-                'value_type': 'float',
-                'min_value': 1.01,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
+        max_parameter = _input_parameter(
+            max_key, max_label, z_max, 'increase', value_type='float', upper=INCONSISTENCY_Z_MAX,
+            ratio={'constraints': ['z_ratio_constraint_max'], 'pair': global_pair, 'bound': 'ub'}
+        )
+        if expected_model_check:
+            min_parameter, max_parameter = z_scale_parameters
+
+        _add_ratio_issue(
+            model, issue_vars, issue_meta, "z_interval_min",
+            max_weight_var, min_weight_var, z_min, 'lb', min_parameter,
+            floor_value=INCONSISTENCY_Z_MIN
+        )
+        _add_ratio_issue(
+            model, issue_vars, issue_meta, "z_interval_max",
+            max_weight_var, min_weight_var, z_max, 'ub', max_parameter,
+            ceiling_value=INCONSISTENCY_Z_MAX
         )
 
     elif ratio_mode == 'interval-successive':
         for rank in range(1, cards_arrangement['rank'].max()):
-            curr_rank = rank_groups[rank][0]
-            next_rank = rank_groups[rank + 1][0]
+            pair = ('successive', rank)
+            num_var, den_var = _ratio_pair_variables(pair, weights, rank_groups)
             z_min = float(z_value[f'zmin_{rank}'])
             z_max = float(z_value[f'zmax_{rank}'])
-            den_var = weights[curr_rank]
-            expr_min = weights[next_rank] - z_min * weights[curr_rank]
-            expr_max = weights[next_rank] - z_max * weights[curr_rank]
-            _add_relaxable_issue(
-                model, issue_vars, issue_meta,
-                issue_id=f"z_successive_min_{rank}",
-                expr=expr_min,
-                bound='lb',
-                metadata={
-                    'label': f"z lower bound for Rank {rank + 1} / Rank {rank}",
-                    'current_value': z_min,
-                    'value_type': 'float',
-                    'min_value': 1.01,
-                    'rank_pair': [rank, rank + 1],
-                    'scale_source': 'ratio',
-                    'den_var': den_var
-                }
+            _add_ratio_issue(
+                model, issue_vars, issue_meta, f"z_successive_min_{rank}",
+                num_var, den_var, z_min, 'lb',
+                _input_parameter(('z_key', f'zmin_{rank}'), f"z lower bound for Rank {rank + 1} / Rank {rank}",
+                                 z_min, 'decrease', value_type='float', lower=INCONSISTENCY_Z_MIN,
+                                 rank_pair=[rank, rank + 1],
+                                 ratio={'constraints': [f'z_ratio_constraint_min_{rank}'], 'pair': pair, 'bound': 'lb'}),
+                floor_value=INCONSISTENCY_Z_MIN
             )
-            _add_relaxable_issue(
-                model, issue_vars, issue_meta,
-                issue_id=f"z_successive_max_{rank}",
-                expr=expr_max,
-                bound='ub',
-                metadata={
-                    'label': f"z upper bound for Rank {rank + 1} / Rank {rank}",
-                    'current_value': z_max,
-                    'value_type': 'float',
-                    'min_value': 1.01,
-                    'rank_pair': [rank, rank + 1],
-                    'scale_source': 'ratio',
-                    'den_var': den_var
-                }
+            _add_ratio_issue(
+                model, issue_vars, issue_meta, f"z_successive_max_{rank}",
+                num_var, den_var, z_max, 'ub',
+                _input_parameter(('z_key', f'zmax_{rank}'), f"z upper bound for Rank {rank + 1} / Rank {rank}",
+                                 z_max, 'increase', value_type='float', upper=INCONSISTENCY_Z_MAX,
+                                 rank_pair=[rank, rank + 1],
+                                 ratio={'constraints': [f'z_ratio_constraint_max_{rank}'], 'pair': pair, 'bound': 'ub'}),
+                ceiling_value=INCONSISTENCY_Z_MAX
             )
 
-    elif ratio_mode == 'probability-cloud':
-        z_cloud = _extract_probability_pairs(
-            z_value,
-            value_prefix='z-value-',
-            beta_prefix='z-beta-'
-        )
-        z_cloud = _normalize_probability_cloud(z_cloud)
-        z_min = float(min(z_cloud.keys()))
-        z_max = float(max(z_cloud.keys()))
-        expr_min = weights[max_index] - z_min * weights[min_index]
-        expr_max = weights[max_index] - z_max * weights[min_index]
-        _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_support_min",
-            expr=expr_min,
-            bound='lb',
-            metadata={
-                'label': "minimum z support",
-                'current_value': z_min,
-                'value_type': 'float',
-                'min_value': 1.01,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
-        )
-        _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="z_support_max",
-            expr=expr_max,
-            bound='ub',
-            metadata={
-                'label': "maximum z support",
-                'current_value': z_max,
-                'value_type': 'float',
-                'min_value': 1.01,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
-        )
-
-    elif ratio_mode == 'hfl-ratio-interval':
-        if isinstance(z_value, dict):
-            z_min_term = int(z_value.get('emin', z_value.get('zmin', HFL_Z_MIN_TERM)))
-            z_max_term = int(z_value.get('emax', z_value.get('zmax', z_min_term)))
-        else:
-            z_min_term = int(float(z_value))
-            z_max_term = int(float(z_value))
+    elif ratio_mode == 'hfl-ratio-interval' and isinstance(z_value, dict):
+        min_key = 'emin' if 'emin' in z_value else 'zmin'
+        max_key = 'emax' if 'emax' in z_value else 'zmax'
+        z_min_term = int(z_value.get(min_key, HFL_Z_MIN_TERM))
+        z_max_term = int(z_value.get(max_key, z_min_term))
         z_min = _map_hfl_z_term(z_min_term)
         z_max = _map_hfl_z_term(z_max_term)
 
-        expr_min = weights[max_index] - z_min * weights[min_index]
-        expr_max = weights[max_index] - z_max * weights[min_index]
-        _add_relaxable_issue(
-            model, issue_vars, issue_meta,
-            issue_id="hfl_z_min",
-            expr=expr_min,
-            bound='lb',
-            metadata={
-                'label': "HFL lower z term",
-                'current_value': z_min,
-                'value_type': 'int',
-                'min_value': HFL_Z_MIN_TERM,
-                'max_value': HFL_Z_MAX_TERM,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
+        _add_ratio_issue(
+            model, issue_vars, issue_meta, "hfl_z_min",
+            max_weight_var, min_weight_var, z_min, 'lb',
+            _input_parameter(('z_key', min_key), "HFL lower z term", z_min_term, 'decrease',
+                             lower=HFL_Z_MIN_TERM),
+            floor_value=HFL_Z_MIN_TERM
         )
-        _add_relaxable_issue(
+        _add_ratio_issue(
+            model, issue_vars, issue_meta, "hfl_z_max",
+            max_weight_var, min_weight_var, z_max, 'ub',
+            _input_parameter(('z_key', max_key), "HFL upper z term", z_max_term, 'increase',
+                             upper=HFL_Z_MAX_TERM),
+            ceiling_value=HFL_Z_MAX_TERM
+        )
+
+    if expected_model_check:
+        _add_expected_belief_issues(
             model, issue_vars, issue_meta,
-            issue_id="hfl_z_max",
-            expr=expr_max,
-            bound='ub',
-            metadata={
-                'label': "HFL upper z term",
-                'current_value': z_max,
-                'value_type': 'int',
-                'min_value': HFL_Z_MIN_TERM,
-                'max_value': HFL_Z_MAX_TERM,
-                'scale_source': 'ratio',
-                'den_var': min_weight_var
-            }
+            cards_arrangement, z_value, e_value,
+            criteria_cards, rank_white_count, comp_rule_within,
+            config['normalized'], extra_cond, min_delta,
+            z_scale_parameters, e_shift_parameters
         )
 
     # Hard normalization.
-    if normalized:
+    if config['normalized']:
         model.addConstr(gp.quicksum(weights.values()) == 100, "ei_normalization")
 
     # Keep optional requirements hard in EI analysis when enabled.
-    if extra_constraints is not None:
-        _add_optional_extra_constraints(model, weights, criteria_cards, extra_constraints)
+    if extra_cond is not None:
+        _add_optional_extra_constraints(model, weights, criteria_cards, extra_cond)
 
     if not issue_vars:
         return {
@@ -3322,83 +3720,85 @@ def identify_inconsistency_recommendations(cards_arrangement,
         GRB.MINIMIZE
     )
 
+    context = {
+        'cards_arrangement': cards_arrangement,
+        'z_value': z_value,
+        'e_value': e_value,
+        'config': config,
+        'extra_constraints': extra_cond,
+        'min_delta': min_delta,
+        'check_expected_model': expected_model_check,
+        'remaining_checks': INCONSISTENCY_MAX_FEASIBILITY_CHECKS,
+    }
+
     suggestions = []
-    first_cardinality = None
-    for idx in range(max_suggestions):
+    restoring_parameter_sets = []
+    for idx in range(INCONSISTENCY_MAX_CANDIDATE_SETS):
+        if len(suggestions) >= max_suggestions or context['remaining_checks'] <= 0:
+            break
+
         _optimize_model(model)
         if model.status != GRB.OPTIMAL:
             break
 
-        active_issues = [
+        active_issues = sorted(
             issue_id for issue_id, var in issue_vars.items()
             if var.X > 0.5
-        ]
-        cardinality_value = len(active_issues)
-        if first_cardinality is None:
-            first_cardinality = cardinality_value
-
-        if cardinality_value == 0:
+        )
+        if not active_issues:
             break
 
-        exact_issue_set_recommendations = _find_issue_set_exact_recommendations(
-            cards_arrangement=cards_arrangement,
-            z_value=original_z_value,
-            e_value=original_e_value,
-            srf_method=restoration_method,
-            active_issues=sorted(active_issues),
-            issue_meta=issue_meta,
-            extra_constraints=extra_constraints,
-            min_delta=min_delta
-        )
-        if restoration_method == 'srf_ii':
-            # For SRF-II, only keep feasibility-checked restoration suggestions.
-            recommendations = exact_issue_set_recommendations or []
-        elif exact_issue_set_recommendations is None:
-            recommendations = [
-                _build_inconsistency_recommendation(issue_id, issue_meta[issue_id], rank_groups)
-                for issue_id in sorted(active_issues)
-            ]
-
-            if len(active_issues) == 1:
-                exact_rec = _find_single_issue_exact_recommendation(
-                    cards_arrangement=cards_arrangement,
-                    z_value=original_z_value,
-                    e_value=original_e_value,
-                    srf_method=restoration_method,
-                    issue_id=active_issues[0],
-                    issue_meta=issue_meta,
-                    extra_constraints=extra_constraints,
-                    min_delta=min_delta
-                )
-                if exact_rec is not None:
-                    recommendations = [exact_rec]
-        else:
-            recommendations = exact_issue_set_recommendations
-        recommendations = [rec for rec in recommendations if rec is not None]
+        recommendations = None
+        parameters = _merge_issue_parameters(active_issues, issue_meta)
+        if parameters is not None:
+            parameter_keys = frozenset(parameter['key'] for parameter in parameters)
+            already_covered = any(keys <= parameter_keys for keys in restoring_parameter_sets)
+            if not already_covered:
+                ratio_seeds = {}
+                for parameter in parameters:
+                    if parameter['ratio'] is None or 'pair' not in parameter['ratio']:
+                        continue
+                    num_var, den_var = _ratio_pair_variables(parameter['ratio']['pair'], weights, rank_groups)
+                    if den_var.X > 1e-9:
+                        ratio_seeds[parameter['key']] = num_var.X / den_var.X
+                recommendations = _search_restoration(context, parameters, ratio_seeds)
 
         if recommendations:
             suggestions.append({
                 'suggestion_id': len(suggestions) + 1,
-                'minimal_changes': cardinality_value,
+                'minimal_changes': len(recommendations),
                 'recommendations': recommendations
             })
-
-        model.addConstr(
-            gp.quicksum(issue_vars[issue_id] for issue_id in active_issues) <= len(active_issues) - 1,
-            f"ei_nogood_{idx + 1}"
-        )
+            restoring_parameter_sets.append(parameter_keys)
+            # Any superset of a restoring set is not minimal.
+            model.addConstr(
+                gp.quicksum(issue_vars[issue_id] for issue_id in active_issues) <= len(active_issues) - 1,
+                f"ei_nogood_{idx + 1}"
+            )
+        else:
+            # Only this exact set is ruled out: a larger set containing these
+            # changes may still restore consistency.
+            model.addConstr(
+                gp.quicksum(issue_vars[issue_id] for issue_id in active_issues)
+                - gp.quicksum(var for issue_id, var in issue_vars.items() if issue_id not in active_issues)
+                <= len(active_issues) - 1,
+                f"ei_reject_{idx + 1}"
+            )
 
     return {
         'detected': len(suggestions) > 0,
         'message': (
             "Input preferences are inconsistent. "
-            "Apply one of the minimal adjustment sets below and re-run."
+            "Apply all changes of one suggestion below, keep the other inputs unchanged, and re-run."
             if suggestions else
             "No actionable inconsistency recommendation could be generated."
         ),
         'requested_suggestions': max_suggestions,
         'returned_suggestions': len(suggestions),
-        'minimal_inconsistency_size': int(first_cardinality) if first_cardinality is not None else None,
+        'minimal_inconsistency_size': (
+            min(suggestion['minimal_changes'] for suggestion in suggestions)
+            if suggestions else None
+        ),
         'suggestions': suggestions
     }
 

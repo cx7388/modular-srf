@@ -1821,7 +1821,7 @@ function renderZInputs() {
                     <div style="display: flex; flex-direction: column; align-items: center">
                         <input type="number" id="zmin" name="z-value-min"
                                class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                               step=0.5  min=1.5 max=1000 value="${DEFAULT_Z_MIN_TEXT}"
+                               step="0.1" min="1.1" max="1000" value="${DEFAULT_Z_MIN_TEXT}"
                                placeholder="Enter a value">
                         <span style="font-size: 0.75rem;">min</span>
                     </div>
@@ -1829,7 +1829,7 @@ function renderZInputs() {
                     <div style="display: flex; flex-direction: column; align-items: center">
                         <input type="number" id="zmax" name="z-value-max"
                                class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                               step=0.5  min=1.5 max=1000 value="${DEFAULT_Z_MAX_TEXT}"
+                               step="0.1" min="1.1" max="1000" value="${DEFAULT_Z_MAX_TEXT}"
                                placeholder="Enter a value">   
                         <span style="font-size: 0.75rem;">max</span>
                     </div>                             
@@ -1901,7 +1901,7 @@ function renderZInputs() {
                 </label>
                 <input type="number" id="z-value" name="z-value"
                        class="labelmaxmin form-control" oninput="enforceMinMaxLimits(event)"
-                       step=0.5  min=1.5 max=1000 value="${DEFAULT_PRECISE_Z_TEXT}"
+                       step="0.1" min="1.1" max="1000" value="${DEFAULT_PRECISE_Z_TEXT}"
                        placeholder="Enter a value">`;
     }
 
